@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UPRES — Image Upscaler to 4K</title>
+<style>
+  :root{
+    --bg:#0a0e14;
+    --panel:#10161f;
+    --line:#1e2733;
+    --ink:#e7edf5;
+    --ink-dim:#7c8aa0;
+    --signal:#5ee6c8;
+    --signal-dim:#2f6e63;
+    --warn:#f2a154;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(circle at 15% 0%, rgba(94,230,200,0.06), transparent 40%),
+      var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    min-height:100vh;
+    line-height:1.5;
+  }
+
+  /* --- pixel grid backdrop --- */
+  .grid-overlay{
+    position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:
+      linear-gradient(to right, rgba(94,230,200,0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(94,230,200,0.035) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at top, black, transparent 75%);
+  }
+
+  header{
+    position:relative; z-index:1;
+    max-width:960px; margin:0 auto;
+    padding:64px 24px 32px;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.18em;
+    color:var(--signal);
+    text-transform:uppercase;
+    display:flex; align-items:center; gap:10px;
+    margin-bottom:18px;
+  }
+  .eyebrow::before{
+    content:"";
+    width:8px; height:8px;
+    background:var(--signal);
+    box-shadow:0 0 12px var(--signal);
+    display:inline-block;
+  }
+  h1{
+    font-size:clamp(32px, 6vw, 52px);
+    line-height:1.05;
+    margin:0 0 14px;
+    font-weight:700;
+    letter-spacing:-0.02em;
+  }
+  h1 span{color:var(--signal);}
+  .lede{
+    color:var(--ink-dim);
+    max-width:560px;
+    font-size:15px;
+    margin:0;
+  }
+  .honesty{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--warn);
+    background:rgba(242,161,84,0.08);
+    border:1px solid rgba(242,161,84,0.25);
+    padding:10px 14px;
+    margin-top:22px;
+    max-width:600px;
+    display:inline-block;
+  }
+
+  main{
+    position:relative; z-index:1;
+    max-width:960px; margin:0 auto;
+    padding:0 24px 100px;
+    display:grid;
+    gap:24px;
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    padding:28px;
+  }
+
+  /* dropzone */
+  #dropzone{
+    border:1px dashed var(--line);
+    padding:48px 24px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .15s ease, background .15s ease;
+    position:relative;
+  }
+  #dropzone.drag{
+    border-color:var(--signal);
+    background:rgba(94,230,200,0.04);
+  }
+  #dropzone .icon{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--signal);
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    margin-bottom:10px;
+  }
+  #dropzone p{margin:4px 0; color:var(--ink);}
+  #dropzone .sub{color:var(--ink-dim); font-size:13px;}
+  #fileInput{display:none;}
+
+  /* controls row */
+  .controls{
+    display:flex; flex-wrap:wrap; gap:12px;
+    align-items:center; justify-content:space-between;
+  }
+  .target-select{
+    display:flex; gap:8px; flex-wrap:wrap;
+  }
+  .chip{
+    font-family:var(--mono);
+    font-size:12px;
+    padding:9px 14px;
+    border:1px solid var(--line);
+    background:transparent;
+    color:var(--ink-dim);
+    cursor:pointer;
+    transition:all .15s ease;
+  }
+  .chip:hover{border-color:var(--signal-dim); color:var(--ink);}
+  .chip.active{
+    border-color:var(--signal);
+    color:var(--signal);
+    background:rgba(94,230,200,0.06);
+  }
+  button.primary{
+    font-family:var(--mono);
+    font-size:13px;
+    letter-spacing:0.04em;
+    padding:12px 22px;
+    background:var(--signal);
+    color:#06110e;
+    border:none;
+    cursor:pointer;
+    font-weight:600;
+    transition:transform .1s ease, box-shadow .15s ease;
+  }
+  button.primary:hover{ box-shadow:0 0 24px rgba(94,230,200,0.35); }
+  button.primary:active{ transform:scale(0.98); }
+  button.primary:disabled{
+    background:var(--line); color:var(--ink-dim); cursor:not-allowed; box-shadow:none;
+  }
+  button.ghost{
+    font-family:var(--mono);
+    font-size:12px;
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--ink-dim);
+    padding:11px 18px;
+    cursor:pointer;
+  }
+  button.ghost:hover{ color:var(--ink); border-color:var(--signal-dim); }
+
+  /* progress */
+  .progress-wrap{display:none; margin-top:20px;}
+  .progress-wrap.show{display:block;}
+  .progress-label{
+    font-family:var(--mono); font-size:11px; color:var(--ink-dim);
+    display:flex; justify-content:space-between; margin-bottom:8px;
+    text-transform:uppercase; letter-spacing:0.1em;
+  }
+  .progress-track{
+    height:3px; background:var(--line); position:relative; overflow:hidden;
+  }
+  .progress-fill{
+    height:100%; width:0%; background:var(--signal);
+    box-shadow:0 0 10px var(--signal);
+    transition:width .25s ease;
+  }
+
+  /* result */
+  #resultSection{display:none;}
+  #resultSection.show{display:grid; gap:20px;}
+
+  .compare{
+    position:relative;
+    width:100%;
+    overflow:hidden;
+    border:1px solid var(--line);
+    background:#000;
+    user-select:none;
+    touch-action:none;
+  }
+  .compare img{
+    display:block; width:100%; height:auto;
+  }
+  .compare .after-wrap{
+    position:absolute; top:0; left:0; height:100%; overflow:hidden; width:50%;
+  }
+  .compare .after-wrap img{
+    width:var(--compare-w, 0px);
+    max-width:none;
+    height:100%;
+    object-fit:cover;
+  }
+  .compare .handle{
+    position:absolute; top:0; bottom:0; left:50%;
+    width:2px; background:var(--signal);
+    box-shadow:0 0 12px rgba(94,230,200,0.6);
+    cursor:ew-resize;
+    transform:translateX(-1px);
+  }
+  .compare .handle::after{
+    content:"⇔";
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    width:36px; height:36px;
+    background:var(--signal);
+    color:#06110e;
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:700;
+  }
+  .compare .tag{
+    position:absolute; top:12px;
+    font-family:var(--mono); font-size:10px; letter-spacing:0.12em;
+    padding:5px 10px; background:rgba(0,0,0,0.55); color:var(--signal);
+    text-transform:uppercase; z-index:2;
+  }
+  .tag.before{left:12px;}
+  .tag.after{right:12px;}
+
+  .meta-row{
+    display:flex; flex-wrap:wrap; gap:24px;
+    font-family:var(--mono); font-size:12px; color:var(--ink-dim);
+  }
+  .meta-row b{color:var(--ink); font-weight:600;}
+  .meta-row .signal-txt{color:var(--signal);}
+
+  .actions{display:flex; gap:12px; flex-wrap:wrap;}
+
+  footer{
+    position:relative; z-index:1;
+    max-width:960px; margin:0 auto;
+    padding:0 24px 60px;
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--ink-dim);
+    letter-spacing:0.04em;
+  }
+  footer a{color:var(--signal); text-decoration:none;}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important;}
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-overlay"></div>
+
+<header>
+  <div class="eyebrow">Client-side · No upload · Runs in your browser</div>
+  <h1>Upscale any image to <span>real 4K</span> pixels.</h1>
+  <p class="lede">Drop an image, pick a 4K target, and UPRES resamples it up to true 3840×2160-class resolution using progressive interpolation and edge sharpening — entirely on your device.</p>
+  <div class="honesty">⚠ HONEST LABEL — This is high-quality resampling + sharpening, not generative AI super-resolution. It will not invent detail that isn't in the source; it produces a clean, sharp image at full 4K pixel dimensions.</div>
+</header>
+
+<main>
+
+  <section class="panel" id="uploadPanel">
+    <div id="dropzone">
+      <input type="file" id="fileInput" accept="image/*">
+      <div class="icon">01 · SOURCE</div>
+      <p>Drop an image here, or click to browse</p>
+      <p class="sub">JPG, PNG, WEBP — processed locally, never leaves your browser</p>
+    </div>
+  </section>
+
+  <section class="panel" id="controlPanel" style="display:none;">
+    <div class="controls">
+      <div class="target-select">
+        <button class="chip active" data-target="3840x2160">3840 × 2160 (4K UHD)</button>
+        <button class="chip" data-target="4096x2160">4096 × 2160 (DCI 4K)</button>
+        <button class="chip" data-target="7680x4320">7680 × 4320 (8K)</button>
+      </div>
+      <button class="primary" id="runBtn">Run Upscale →</button>
+    </div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label"><span id="progressStage">Initializing</span><span id="progressPct">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+  </section>
+
+  <section class="panel" id="resultSection">
+    <div class="compare" id="compare">
+      <span class="tag before">Original</span>
+      <span class="tag after">Upscaled</span>
+      <img id="beforeImg" src="" alt="original">
+      <div class="after-wrap" id="afterWrap"><img id="afterImg" src="" alt="upscaled"></div>
+      <div class="handle" id="handle"></div>
+    </div>
+    <div class="meta-row">
+      <div>Source: <b id="metaSource">—</b></div>
+      <div>Output: <b class="signal-txt" id="metaOutput">—</b></div>
+      <div>Scale factor: <b id="metaScale">—</b></div>
+      <div>File size: <b id="metaSize">—</b></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="downloadBtn">Download PNG</button>
+      <button class="ghost" id="resetBtn">Start over</button>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  UPRES — static, client-side, deployable on GitHub Pages. No server, no API, no tracking. · <a href="#" id="howLink">How it works</a>
+</footer>
+
+<script>
+(function(){
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const uploadPanel = document.getElementById('uploadPanel');
+  const controlPanel = document.getElementById('controlPanel');
+  const resultSection = document.getElementById('resultSection');
+  const runBtn = document.getElementById('runBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressStage = document.getElementById('progressStage');
+  const progressPct = document.getElementById('progressPct');
+  const chips = document.querySelectorAll('.chip');
+  const beforeImg = document.getElementById('beforeImg');
+  const afterImg = document.getElementById('afterImg');
+  const afterWrap = document.getElementById('afterWrap');
+  const compare = document.getElementById('compare');
+  const handle = document.getElementById('handle');
+  const metaSource = document.getElementById('metaSource');
+  const metaOutput = document.getElementById('metaOutput');
+  const metaScale = document.getElementById('metaScale');
+  const metaSize = document.getElementById('metaSize');
+
+  let sourceImage = null;
+  let sourceFileName = 'image';
+  let targetW = 3840, targetH = 2160;
+  let resultBlobUrl = null;
+
+  // --- target chip selection ---
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chips.forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const [w,h] = chip.dataset.target.split('x').map(Number);
+      targetW = w; targetH = h;
+    });
+  });
+
+  // --- file intake ---
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file){
+    if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+    sourceFileName = file.name.replace(/\.[^/.]+$/, '');
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        sourceImage = img;
+        controlPanel.style.display = 'block';
+        resultSection.classList.remove('show');
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // --- progressive high-quality upscale ---
+  // Canvas's built-in scaling is bilinear/trilinear at best in one pass, which
+  // looks soft or aliased on a large jump. Stepping the scale up in factors of
+  // <=2x per pass (the technique browsers' own mipmap-based smoothing uses
+  // internally) keeps each resample small enough that imageSmoothingQuality
+  // stays effective, then a light unsharp-mask pass restores edge contrast
+  // that resampling always softens.
+  function progressiveUpscale(img, destW, destH, onProgress){
+    return new Promise(resolve => {
+      let curW = img.naturalWidth;
+      let curH = img.naturalHeight;
+
+      let srcCanvas = document.createElement('canvas');
+      srcCanvas.width = curW; srcCanvas.height = curH;
+      srcCanvas.getContext('2d').drawImage(img, 0, 0);
+
+      const totalDist = Math.log(destW / curW) / Math.log(2);
+      let stepsDone = 0;
+      const estSteps = Math.max(1, Math.ceil(Math.abs(totalDist)));
+
+      function step(){
+        const remainingRatio = destW / curW;
+        let nextW, nextH;
+
+        if (Math.abs(remainingRatio - 1) < 0.001 || estSteps <= 1) {
+          nextW = destW; nextH = destH;
+        } else if (remainingRatio > 1) {
+          const factor = Math.min(2, remainingRatio);
+          nextW = Math.round(curW * factor);
+          nextH = Math.round(curH * factor);
+          if (nextW >= destW * 0.98) { nextW = destW; nextH = destH; }
+        } else {
+          const factor = Math.max(0.5, remainingRatio);
+          nextW = Math.round(curW * factor);
+          nextH = Math.round(curH * factor);
+          if (nextW <= destW * 1.02) { nextW = destW; nextH = destH; }
+        }
+
+        const c = document.createElement('canvas');
+        c.width = nextW; c.height = nextH;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(srcCanvas, 0, 0, curW, curH, 0, 0, nextW, nextH);
+
+        srcCanvas = c;
+        curW = nextW; curH = nextH;
+        stepsDone++;
+        onProgress(Math.min(90, Math.round((stepsDone / estSteps) * 80)), 'Resampling');
+
+        if (curW === destW && curH === destH) {
+          onProgress(90, 'Sharpening');
+          setTimeout(() => {
+            sharpen(srcCanvas.getContext('2d'), destW, destH);
+            onProgress(100, 'Done');
+            resolve(srcCanvas);
+          }, 30);
+        } else {
+          setTimeout(step, 10);
+        }
+      }
+      step();
+    });
+  }
+
+  // light unsharp mask via 3x3 convolution to counter resample softening
+  function sharpen(ctx, w, h){
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const src = imgData.data;
+    const out = new Uint8ClampedArray(src.length);
+    const kernel = [0,-0.5,0, -0.5,3,-0.5, 0,-0.5,0]; // mild unsharp
+    for (let y = 0; y < h; y++){
+      for (let x = 0; x < w; x++){
+        const idx = (y*w+x)*4;
+        if (x===0||y===0||x===w-1||y===h-1){
+          out[idx]=src[idx]; out[idx+1]=src[idx+1]; out[idx+2]=src[idx+2]; out[idx+3]=src[idx+3];
+          continue;
+        }
+        for (let c = 0; c < 3; c++){
+          let sum = 0, k = 0;
+          for (let ky=-1; ky<=1; ky++){
+            for (let kx=-1; kx<=1; kx++){
+              const nIdx = ((y+ky)*w + (x+kx))*4 + c;
+              sum += src[nIdx] * kernel[k++];
+            }
+          }
+          out[idx+c] = sum;
+        }
+        out[idx+3] = src[idx+3];
+      }
+    }
+    imgData.data.set(out);
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function fitContain(srcW, srcH, boxW, boxH){
+    const ratio = Math.min(boxW / srcW, boxH / srcH);
+    return { w: Math.round(srcW * ratio), h: Math.round(srcH * ratio) };
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (!sourceImage) return;
+    runBtn.disabled = true;
+    progressWrap.classList.add('show');
+    progressFill.style.width = '2%';
+    progressStage.textContent = 'Preparing';
+    progressPct.textContent = '2%';
+
+    const dims = fitContain(sourceImage.naturalWidth, sourceImage.naturalHeight, targetW, targetH);
+
+    const resultCanvas = await progressiveUpscale(sourceImage, dims.w, dims.h, (pct, stage) => {
+      progressFill.style.width = pct + '%';
+      progressPct.textContent = pct + '%';
+      progressStage.textContent = stage;
+    });
+
+    resultCanvas.toBlob(blob => {
+      if (resultBlobUrl) URL.revokeObjectURL(resultBlobUrl);
+      resultBlobUrl = URL.createObjectURL(blob);
+
+      beforeImg.src = sourceImage.src;
+      afterImg.src = resultBlobUrl;
+      afterImg.onload = () => {
+        const rect = compare.getBoundingClientRect();
+        afterImg.style.width = rect.width + 'px';
+        setHandle(50);
+      };
+
+      metaSource.textContent = `${sourceImage.naturalWidth}×${sourceImage.naturalHeight}`;
+      metaOutput.textContent = `${dims.w}×${dims.h}`;
+      metaScale.textContent = (dims.w / sourceImage.naturalWidth).toFixed(2) + '×';
+      metaSize.textContent = (blob.size / (1024*1024)).toFixed(2) + ' MB';
+
+      resultSection.classList.add('show');
+      runBtn.disabled = false;
+      progressWrap.classList.remove('show');
+      resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 'image/png');
+  });
+
+  // --- before/after compare slider ---
+  function setHandle(pct){
+    pct = Math.max(0, Math.min(100, pct));
+    afterWrap.style.width = pct + '%';
+    handle.style.left = pct + '%';
+  }
+  let dragging = false;
+  handle.addEventListener('pointerdown', e => { dragging = true; e.target.setPointerCapture(e.pointerId); });
+  window.addEventListener('pointerup', () => dragging = false);
+  compare.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const rect = compare.getBoundingClientRect();
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setHandle(pct);
+  });
+  compare.addEventListener('click', e => {
+    if (e.target === handle) return;
+    const rect = compare.getBoundingClientRect();
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setHandle(pct);
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    if (!resultBlobUrl) return;
+    const a = document.createElement('a');
+    a.href = resultBlobUrl;
+    a.download = `${sourceFileName}-4k.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    sourceImage = null;
+    fileInput.value = '';
+    controlPanel.style.display = 'none';
+    resultSection.classList.remove('show');
+    uploadPanel.scrollIntoView({ behavior: 'smooth' });
+  });
+
+  document.getElementById('howLink').addEventListener('click', e => {
+    e.preventDefault();
+    alert('UPRES scales your image up in small steps (never more than 2x per pass) using the browser\'s high-quality resampling, then applies a mild sharpening pass to restore edge contrast. This produces a clean, real 4K-pixel image — it does not fabricate new detail the way AI super-resolution models do.');
+  });
+})();
+</script>
+
+</body>
+</html>
