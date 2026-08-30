@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>UPRES PRO — Image Upscaler & Graphics Enhancer</title>
-<meta name="description" content="Client-side image upscaler to 4K/8K with GPU-accelerated resampling, optional AI super-resolution, and a graphics/poster enhancement mode. Runs entirely in your browser.">
+<title>UPRES — Non-AI Image Upscaler &amp; Graphics Enhancer</title>
+<meta name="description" content="Client-side image upscaler to 4K/8K using traditional Lanczos resampling, edge-aware denoising, and adaptive sharpening — no AI, no upload, no server.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,15 +16,15 @@
   <header class="top">
     <div class="brand">
       <div class="brand-mark">U</div>
-      <div class="brand-name"><b>UPRES</b> PRO</div>
+      <div class="brand-name"><b>UPRES</b> · non-AI</div>
     </div>
-    <h1>Upscale images to real <span>4K / 8K</span>, on-device.</h1>
-    <p class="lede">GPU-accelerated resampling, optional AI super-resolution, and a dedicated graphics/poster enhancer — no upload, no server, no build step.</p>
+    <h1>Upscale images to real <span>4K / 8K</span> with traditional processing.</h1>
+    <p class="lede">Lanczos3 resampling, edge-aware noise reduction, adaptive sharpening, and a dedicated graphics/poster enhancer — pure math, no neural network, no upload, no server.</p>
     <div class="capsule-row" id="capabilityRow">
-      <span class="capsule" id="capWebGPU"><span class="dot"></span>WebGPU</span>
       <span class="capsule" id="capWebGL"><span class="dot"></span>WebGL2</span>
       <span class="capsule" id="capWorker"><span class="dot"></span>Web Worker</span>
       <span class="capsule" id="capOffscreen"><span class="dot"></span>OffscreenCanvas</span>
+      <span class="capsule" id="capClipboard"><span class="dot"></span>Clipboard</span>
     </div>
   </header>
 
@@ -51,11 +51,35 @@
     </div>
   </section>
 
+  <!-- BEFORE ANALYSIS -->
+  <section class="panel" id="beforeAnalysisPanel" style="display:none;">
+    <p class="panel-title">Source Quality Analysis</p>
+    <div class="info-grid">
+      <div class="info-item"><div class="k">Sharpness (Laplacian var.)</div><div class="v" id="beforeSharpness">—</div></div>
+      <div class="info-item"><div class="k">Edge density</div><div class="v" id="beforeEdge">—</div></div>
+      <div class="info-item"><div class="k">Noise estimate (σ)</div><div class="v" id="beforeNoise">—</div></div>
+    </div>
+  </section>
+
+  <!-- PROCESSING MODE / PRESET -->
+  <section class="panel" id="presetPanel">
+    <p class="panel-title">02 · Processing Mode</p>
+    <div class="chip-grid" id="presetChips">
+      <button class="chip active" data-preset="photo">Photo</button>
+      <button class="chip" data-preset="social">Social Media</button>
+      <button class="chip" data-preset="news">News GFX</button>
+      <button class="chip" data-preset="portrait">Portrait</button>
+      <button class="chip" data-preset="max">Max Quality</button>
+      <button class="chip" data-preset="custom">Custom</button>
+    </div>
+  </section>
+
   <!-- TARGET (upscale mode) -->
   <section class="panel" id="targetPanel" style="display:none;">
-    <p class="panel-title">02 · Target Resolution</p>
+    <p class="panel-title">03 · Output Resolution</p>
     <div class="chip-grid" id="upscalePresets">
       <button class="chip" data-preset="2x">2×</button>
+      <button class="chip" data-preset="3x">3×</button>
       <button class="chip" data-preset="4x">4×</button>
       <button class="chip active" data-preset="4k">4K UHD (3840×2160)</button>
       <button class="chip" data-preset="dci4k">DCI 4K (4096×2160)</button>
@@ -70,7 +94,7 @@
 
   <!-- EXPORT PRESETS (graphics mode) -->
   <section class="panel" id="graphicsPanel" style="display:none;">
-    <p class="panel-title">02 · Export Preset</p>
+    <p class="panel-title">03 · Export Preset</p>
     <div class="chip-grid" id="graphicsPresets">
       <button class="chip active" data-gpreset="original">Original size (enhance only)</button>
       <button class="chip" data-gpreset="ig-portrait">Instagram Portrait 1080×1350</button>
@@ -86,58 +110,61 @@
     </div>
   </section>
 
-  <!-- ENGINE -->
-  <section class="panel" id="enginePanel">
-    <p class="panel-title">03 · Processing Engine</p>
-    <div class="engine-grid">
-      <div class="engine-card active" data-engine="auto">
-        <div class="name">Auto <span class="tier-badge auto">Recommended</span></div>
-        <div class="desc">Picks the best available tier for your device automatically.</div>
-      </div>
-      <div class="engine-card" data-engine="ai">
-        <div class="name">AI Super Resolution <span class="tier-badge ai">AI</span></div>
-        <div class="desc">Neural super-resolution via ONNX Runtime Web. Requires a model file — see Settings.</div>
-        <div class="status-note" id="aiStatusNote">Checking availability…</div>
-      </div>
-      <div class="engine-card" data-engine="gpu">
-        <div class="name">GPU Enhanced <span class="tier-badge gpu">GPU</span></div>
-        <div class="desc">WebGL2 Lanczos3 shader upscale + GPU sharpening.</div>
-      </div>
-      <div class="engine-card" data-engine="cpu">
-        <div class="name">High Quality Resampling <span class="tier-badge cpu">CPU</span></div>
-        <div class="desc">Progressive stepped resampling. Works everywhere.</div>
-      </div>
+  <!-- RESAMPLING QUALITY -->
+  <section class="panel" id="qualityPanel">
+    <p class="panel-title">04 · Resampling Quality</p>
+    <div class="chip-grid" id="qualityChips">
+      <button class="chip" data-quality="fast">Fast <span class="chip-sub">single-pass</span></button>
+      <button class="chip active" data-quality="balanced">Balanced <span class="chip-sub">multi-pass</span></button>
+      <button class="chip" data-quality="maximum">Maximum <span class="chip-sub">Lanczos3 + multi-pass</span></button>
     </div>
   </section>
 
   <!-- ENHANCEMENTS -->
   <section class="panel" id="enhancePanel">
-    <p class="panel-title">04 · Enhancement Controls</p>
+    <p class="panel-title">05 · Enhancement Controls</p>
+
     <div class="slider-row">
-      <div class="slider-label"><span>Sharpening</span><span class="val" id="sharpenVal">50%</span></div>
-      <input type="range" id="sharpenSlider" min="0" max="100" value="50">
+      <div class="slider-label"><span>Detail enhancement</span><span class="val" id="detailVal">30%</span></div>
+      <input type="range" id="detailSlider" min="0" max="100" value="30">
     </div>
     <div class="slider-row">
-      <div class="slider-label"><span>Noise reduction</span><span class="val" id="denoiseVal">25%</span></div>
-      <input type="range" id="denoiseSlider" min="0" max="100" value="25">
+      <div class="slider-label"><span>Sharpness</span><span class="val" id="sharpVal">45%</span></div>
+      <input type="range" id="sharpSlider" min="0" max="100" value="45">
     </div>
-    <div class="slider-row">
-      <div class="slider-label"><span>Edge enhancement</span><span class="val" id="edgeVal">20%</span></div>
-      <input type="range" id="edgeSlider" min="0" max="100" value="20">
+
+    <div class="select-row">
+      <label>Noise reduction</label>
+      <div class="seg-control" id="noiseSeg">
+        <button data-val="off" class="active">Off</button>
+        <button data-val="low">Low</button>
+        <button data-val="medium">Medium</button>
+        <button data-val="high">High</button>
+      </div>
     </div>
-    <details class="advanced">
-      <summary>Advanced</summary>
+    <div class="select-row">
+      <label>JPEG artifact removal</label>
+      <div class="seg-control" id="jpegSeg">
+        <button data-val="off" class="active">Off</button>
+        <button data-val="low">Low</button>
+        <button data-val="medium">Medium</button>
+        <button data-val="high">High</button>
+      </div>
+    </div>
+
+    <details class="advanced" open>
+      <summary>Protection &amp; contrast</summary>
       <div class="toggle-row">
-        <div><div class="label">Preserve transparency</div><div class="sub">Keep alpha channel for PNG sources</div></div>
-        <label class="switch"><input type="checkbox" id="preserveAlpha" checked><span class="track"></span></label>
+        <div><div class="label">Text / logo protection</div><div class="sub">Edge-density heuristic — shields crisp text &amp; icon edges from noise reduction, boosts their sharpening</div></div>
+        <label class="switch"><input type="checkbox" id="textProtection"><span class="track"></span></label>
       </div>
       <div class="toggle-row">
-        <div><div class="label">JPEG artifact reduction</div><div class="sub">Extra denoise pass tuned for block noise</div></div>
-        <label class="switch"><input type="checkbox" id="jpegCleanup"><span class="track"></span></label>
+        <div><div class="label">Portrait protection</div><div class="sub">RGB skin-tone heuristic — gentler sharpening on smooth skin, not real face detection</div></div>
+        <label class="switch"><input type="checkbox" id="portraitProtection"><span class="track"></span></label>
       </div>
       <div class="toggle-row">
-        <div><div class="label">Deblur pass</div><div class="sub">Mild deconvolution-style sharpening for soft/blurry sources</div></div>
-        <label class="switch"><input type="checkbox" id="deblurToggle"><span class="track"></span></label>
+        <div><div class="label">Local contrast enhancement</div><div class="sub">Large-radius clarity boost, separate from fine-detail sharpening</div></div>
+        <label class="switch"><input type="checkbox" id="localContrast"><span class="track"></span></label>
       </div>
     </details>
   </section>
@@ -148,30 +175,34 @@
   <!-- RUN -->
   <div class="actions-row">
     <button class="primary" id="runBtn" disabled>Select an image to begin</button>
-    <button class="ghost" id="settingsBtn">Settings</button>
   </div>
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label"><span id="progressStage">Idle</span><span id="progressPct">0%</span></div>
     <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-eta" id="progressEta"></div>
     <button class="ghost danger-ghost" id="cancelBtn" style="margin-top:10px; width:100%;">Cancel processing</button>
   </div>
 
   <!-- RESULT -->
   <section class="panel" id="resultPanel" style="display:none;">
     <p class="panel-title">Result</p>
-    <div class="compare" id="compare">
-      <span class="tag before">Before</span>
-      <span class="tag after">After</span>
-      <img id="beforeImg" src="" alt="original">
-      <div class="after-wrap" id="afterWrap"><img id="afterImg" src="" alt="upscaled"></div>
-      <div class="handle" id="handle"></div>
+    <div class="compare-toolbar">
+      <button class="ghost small" id="fitBtn">Fit</button>
+      <button class="ghost small" id="oneToOneBtn">100%</button>
+      <button class="ghost small" id="zoomOutBtn">−</button>
+      <span class="zoom-label" id="zoomLabel">Fit</span>
+      <button class="ghost small" id="zoomInBtn">+</button>
     </div>
-    <div class="zoom-controls">
-      <button id="zoomOut">−</button>
-      <span class="zoom-label" id="zoomLabel">100%</span>
-      <button id="zoomIn">+</button>
-      <button id="zoomReset" style="width:auto; padding:0 10px; font-size:11px; font-family:var(--mono);">Reset</button>
+    <div class="compare-viewport" id="compareViewport">
+      <div class="compare" id="compare">
+        <span class="tag before">Before</span>
+        <span class="tag after">After</span>
+        <img id="beforeImg" src="" alt="original">
+        <div class="after-wrap" id="afterWrap"><img id="afterImg" src="" alt="upscaled"></div>
+        <div class="handle" id="handle"></div>
+      </div>
     </div>
+    <p class="hint">Drag the handle to compare · pinch/scroll to zoom · drag to pan when zoomed in</p>
   </section>
 
   <!-- PROCESSING INFO -->
@@ -180,75 +211,42 @@
     <div class="info-grid">
       <div class="info-item"><div class="k">Source resolution</div><div class="v" id="infoSrcRes">—</div></div>
       <div class="info-item"><div class="k">Output resolution</div><div class="v signal" id="infoOutRes">—</div></div>
-      <div class="info-item"><div class="k">Processing method</div><div class="v" id="infoMethod">—</div></div>
-      <div class="info-item"><div class="k">AI model used</div><div class="v" id="infoModel">—</div></div>
-      <div class="info-item"><div class="k">GPU acceleration</div><div class="v" id="infoGpu">—</div></div>
+      <div class="info-item"><div class="k">Resampling backend</div><div class="v" id="infoMethod">—</div></div>
+      <div class="info-item"><div class="k">Stages applied</div><div class="v" id="infoStages">—</div></div>
       <div class="info-item"><div class="k">Processing time</div><div class="v" id="infoTime">—</div></div>
       <div class="info-item"><div class="k">Estimated memory used</div><div class="v" id="infoMem">—</div></div>
+      <div class="info-item"><div class="k">Sharpness before → after</div><div class="v" id="infoSharpness">—</div></div>
       <div class="info-item"><div class="k">Output file size</div><div class="v" id="infoFileSize">—</div></div>
     </div>
   </section>
 
   <!-- DOWNLOAD -->
   <section class="panel" id="downloadPanel" style="display:none;">
-    <p class="panel-title">Download</p>
+    <p class="panel-title">Export</p>
     <div class="format-row">
       <button class="chip active" data-format="png">PNG</button>
       <button class="chip" data-format="jpeg">JPEG</button>
       <button class="chip" data-format="webp">WebP</button>
     </div>
+    <div class="slider-row" id="jpegQualityRow" style="display:none; margin-top:14px;">
+      <div class="slider-label"><span>JPEG quality</span><span class="val" id="jpegQualityVal">92%</span></div>
+      <input type="range" id="jpegQualitySlider" min="50" max="100" value="92">
+    </div>
     <div class="actions-row">
       <button class="primary" id="downloadBtn">Download image</button>
-      <button class="ghost" id="resetBtn">Start over</button>
+      <button class="ghost" id="copyBtn" style="display:none;">Copy to clipboard</button>
+    </div>
+    <div class="actions-row">
+      <button class="ghost" id="resetBtn" style="flex:1;">Start over</button>
     </div>
   </section>
 
 </div>
 
-<!-- SETTINGS MODAL -->
-<div class="modal-backdrop" id="settingsModal">
-  <div class="modal">
-    <h3>Settings</h3>
-    <p class="modal-sub">Optional AI model and cloud API configuration. Everything here is optional — the app works fully without it.</p>
-
-    <p class="panel-title" style="margin-top:0;">AI Super Resolution model</p>
-    <div class="field">
-      <label>Model path (relative, served from this repo)</label>
-      <input type="text" id="modelUrlInput" value="./models/realesr-general-x4v3.onnx">
-    </div>
-    <p class="modal-sub" id="modelStatusText">Checking for a local model file…</p>
-
-    <p class="panel-title">Cloud API (bring your own key)</p>
-    <div class="field">
-      <label>API endpoint</label>
-      <input type="text" id="apiEndpointInput" placeholder="https://your-provider.example.com/upscale">
-    </div>
-    <div class="field">
-      <label>API key</label>
-      <input type="password" id="apiKeyInput" placeholder="Stored only in this browser's localStorage">
-    </div>
-    <div class="field">
-      <label>Auth header name</label>
-      <input type="text" id="apiAuthHeaderInput" placeholder="Authorization" value="Authorization">
-    </div>
-    <div class="field">
-      <label>Auth value prefix (optional)</label>
-      <input type="text" id="apiAuthPrefixInput" placeholder="Bearer ">
-    </div>
-
-    <div class="modal-actions">
-      <button class="primary" id="saveSettingsBtn">Save</button>
-      <button class="ghost" id="clearApiBtn">Clear API key</button>
-      <button class="ghost" id="closeSettingsBtn">Close</button>
-    </div>
-  </div>
-</div>
-
 <div class="toast" id="toast"></div>
 
 <script src="js/engine.js"></script>
-<script src="js/ai-engine.js"></script>
-<script src="js/api-engine.js"></script>
+<script src="js/presets.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

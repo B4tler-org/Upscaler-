@@ -1,15 +1,9 @@
 /* ============================================================
-   script.js — UPRES PRO main controller
+   script.js — UPRES (non-AI) main controller
    ============================================================ */
 
 (function () {
   'use strict';
-
-  // GPU tier is skipped above this many output pixels (whole-image
-  // WebGL textures at 8K can exceed mobile GPU memory limits) — the
-  // pipeline transparently routes to the tiled CPU worker instead,
-  // and says so in the Processing Information panel.
-  const GPU_SAFE_PIXELS = 9.5e6; // comfortably covers 4K UHD + DCI 4K
 
   const el = (id) => document.getElementById(id);
 
@@ -20,18 +14,29 @@
     sourceFile: null,
     sourceW: 0, sourceH: 0,
     mode: 'upscale',
+    preset: 'photo',
+    applyingPreset: false,
+
     upscalePreset: '4k',
-    customW: null, customH: null,
     graphicsPreset: 'original',
-    gCustomW: null, gCustomH: null,
-    engineChoice: 'auto',
-    aiModelPresent: false,
-    sharpen: 0.5, denoise: 0.25, edge: 0.2,
-    preserveAlpha: true, jpegCleanup: false, deblur: false,
+
+    resampleQuality: 'balanced',
+    detailAmount: 0.30,
+    sharpAmount: 0.45,
+    noiseReduction: 'off',
+    jpegArtifact: 'off',
+    textProtection: false,
+    portraitProtection: false,
+    localContrast: false,
+
     resultFormat: 'png',
+    jpegQuality: 0.92,
     finalCanvas: null,
     resultBlobUrl: null,
-    zoom: 1,
+    beforeMetrics: null,
+    afterMetrics: null,
+
+    zoomPct: 100,
     worker: null,
     currentJobId: null,
     cancelled: false
@@ -47,35 +52,16 @@
     toastTimer = setTimeout(() => t.classList.remove('show'), ms || 3200);
   }
 
-  // ---------------- capability badges ----------------
+  // ---------------- capabilities ----------------
   function initCapabilities() {
     state.caps = Engine.detectCapabilities();
-    setCapsule('capWebGPU', state.caps.webgpu);
     setCapsule('capWebGL', state.caps.webgl2);
     setCapsule('capWorker', state.caps.worker);
     setCapsule('capOffscreen', state.caps.offscreenCanvas);
+    setCapsule('capClipboard', state.caps.clipboardImage);
+    el('copyBtn').style.display = state.caps.clipboardImage ? 'block' : 'none';
   }
-  function setCapsule(id, on) {
-    const c = el(id);
-    if (on) c.classList.add('on');
-  }
-
-  // ---------------- AI availability ----------------
-  async function checkAiAvailability() {
-    const note = el('aiStatusNote');
-    note.textContent = 'Checking for a local model file…';
-    const present = await AIEngine.checkModelPresence();
-    state.aiModelPresent = present;
-    note.textContent = present
-      ? 'Model found — ready to use.'
-      : 'No model file found. Add one at ./models/ — see README.';
-    const modelStatusText = el('modelStatusText');
-    if (modelStatusText) {
-      modelStatusText.textContent = present
-        ? `Model found at ${AIEngine.MODEL_CONFIG.url}`
-        : `No file at ${AIEngine.MODEL_CONFIG.url}. See README → "How to add a real AI super-resolution model".`;
-    }
-  }
+  function setCapsule(id, on) { if (on) el(id).classList.add('on'); }
 
   // ---------------- worker ----------------
   function initWorker() {
@@ -84,7 +70,7 @@
     return state.worker;
   }
 
-  function runWorkerJob(bitmap, width, height, opts) {
+  function runWorkerJob(msgType, bitmap, width, height, extraFields) {
     return new Promise((resolve, reject) => {
       const worker = initWorker();
       const jobId = 'job_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -115,16 +101,32 @@
       }
       worker.addEventListener('message', handler);
 
-      worker.postMessage({
-        type: 'process',
-        jobId,
-        bitmap,
-        width,
-        height,
-        tileSize: Engine.suggestTileSize(state.caps),
-        passes: opts.passes || [],
-        resizeTo: opts.resizeTo || null
-      }, [bitmap]);
+      worker.postMessage(Object.assign({
+        type: msgType, jobId, bitmap, width, height,
+        tileSize: Engine.suggestTileSize(state.caps)
+      }, extraFields), [bitmap]);
+    });
+  }
+
+  function analyzeImage(sourceEl) {
+    return new Promise((resolve, reject) => {
+      createImageBitmap(sourceEl).then((bitmap) => {
+        const worker = initWorker();
+        const jobId = 'analyze_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+        function handler(e) {
+          const msg = e.data;
+          if (msg.jobId !== jobId) return;
+          if (msg.type === 'analyzed') {
+            worker.removeEventListener('message', handler);
+            resolve(msg.metrics);
+          } else if (msg.type === 'error') {
+            worker.removeEventListener('message', handler);
+            reject(new Error(msg.message));
+          }
+        }
+        worker.addEventListener('message', handler);
+        worker.postMessage({ type: 'analyze', jobId, bitmap }, [bitmap]);
+      }).catch(reject);
     });
   }
 
@@ -190,6 +192,17 @@
 
       el('runBtn').disabled = false;
       refreshTargetAndMemory();
+
+      el('beforeAnalysisPanel').style.display = 'block';
+      el('beforeSharpness').textContent = 'Analyzing…';
+      el('beforeEdge').textContent = '—';
+      el('beforeNoise').textContent = '—';
+      analyzeImage(img).then((metrics) => {
+        state.beforeMetrics = metrics;
+        el('beforeSharpness').textContent = metrics.sharpness;
+        el('beforeEdge').textContent = metrics.edgeDensity + '%';
+        el('beforeNoise').textContent = 'σ ' + metrics.noiseSigma;
+      }).catch(() => { el('beforeSharpness').textContent = 'Unavailable'; });
     };
     img.onerror = () => toast('Could not load that image.');
     img.src = url;
@@ -208,6 +221,7 @@
     if (state.mode === 'upscale') {
       switch (state.upscalePreset) {
         case '2x': return { w: sw * 2, h: sh * 2, crop: null };
+        case '3x': return { w: sw * 3, h: sh * 3, crop: null };
         case '4x': return { w: sw * 4, h: sh * 4, crop: null };
         case '4k': { const d = Engine.fitContain(sw, sh, 3840, 2160); return { ...d, crop: null }; }
         case 'dci4k': { const d = Engine.fitContain(sw, sh, 4096, 2160); return { ...d, crop: null }; }
@@ -222,7 +236,6 @@
       }
     }
 
-    // graphics mode
     switch (state.graphicsPreset) {
       case 'original': return { w: sw, h: sh, crop: null };
       case 'ig-portrait': return withCover(sw, sh, 1080, 1350);
@@ -256,13 +269,68 @@
       banner.classList.add('show');
       banner.classList.toggle('high', mem.risk === 'high');
       banner.textContent = mem.risk === 'high'
-        ? `⚠ ${dims.w}×${dims.h} needs an estimated ${mem.estimatedLabel} of memory, above what this device usually has available for a browser tab (${mem.budgetLabel}). Processing will use tiled, memory-safe passes, but very large exports can still be slow or, on low-RAM phones, fail. Consider a smaller preset if that happens.`
+        ? `⚠ ${dims.w}×${dims.h} needs an estimated ${mem.estimatedLabel} of memory, above what this device usually has available for a browser tab (${mem.budgetLabel}). Tiled processing keeps per-step memory bounded, but the final full-resolution image still has to exist in memory once — very large exports can be slow or, on low-RAM phones, fail. Consider a smaller preset if that happens.`
         : `${dims.w}×${dims.h} is a large export (~${mem.estimatedLabel} estimated). Tiled processing will be used automatically to keep memory in check.`;
     }
     el('runBtn').textContent = `Upscale to ${dims.w}×${dims.h} →`;
   }
 
-  // ---------------- presets ----------------
+  // ---------------- processing-mode presets ----------------
+  function wirePresetChips() {
+    document.querySelectorAll('#presetChips .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('#presetChips .chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        state.preset = chip.dataset.preset;
+        if (state.preset !== 'custom' && PRESETS[state.preset]) applyPreset(PRESETS[state.preset]);
+      });
+    });
+  }
+
+  function applyPreset(p) {
+    state.applyingPreset = true;
+
+    setQualityChip(p.resampleQuality);
+    setSliderValue('detailSlider', 'detailVal', Math.round(p.detailAmount * 100));
+    state.detailAmount = p.detailAmount;
+    setSliderValue('sharpSlider', 'sharpVal', Math.round(p.sharpAmount * 100));
+    state.sharpAmount = p.sharpAmount;
+    setSeg('noiseSeg', p.noiseReduction);
+    state.noiseReduction = p.noiseReduction;
+    setSeg('jpegSeg', p.jpegArtifact);
+    state.jpegArtifact = p.jpegArtifact;
+    el('textProtection').checked = p.textProtection;
+    state.textProtection = p.textProtection;
+    el('portraitProtection').checked = p.portraitProtection;
+    state.portraitProtection = p.portraitProtection;
+    el('localContrast').checked = p.localContrast;
+    state.localContrast = p.localContrast;
+
+    state.applyingPreset = false;
+  }
+
+  function setSliderValue(inputId, labelId, pct) {
+    el(inputId).value = pct;
+    el(labelId).textContent = pct + '%';
+  }
+  function setSeg(containerId, val) {
+    const container = el(containerId);
+    container.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.val === val));
+  }
+  function setQualityChip(val) {
+    state.resampleQuality = val;
+    document.querySelectorAll('#qualityChips .chip').forEach(c => c.classList.toggle('active', c.dataset.quality === val));
+  }
+
+  function markCustomIfManual() {
+    if (state.applyingPreset) return;
+    if (state.preset !== 'custom') {
+      state.preset = 'custom';
+      document.querySelectorAll('#presetChips .chip').forEach(c => c.classList.toggle('active', c.dataset.preset === 'custom'));
+    }
+  }
+
+  // ---------------- output presets ----------------
   function wirePresets() {
     document.querySelectorAll('#upscalePresets .chip').forEach(chip => {
       chip.addEventListener('click', () => {
@@ -289,58 +357,72 @@
     el('gCustomH').addEventListener('input', refreshTargetAndMemory);
   }
 
-  // ---------------- engine selector ----------------
-  function wireEngineCards() {
-    document.querySelectorAll('.engine-card').forEach(card => {
-      card.addEventListener('click', () => {
-        document.querySelectorAll('.engine-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-        state.engineChoice = card.dataset.engine;
-        if (state.engineChoice === 'ai' && !state.aiModelPresent) {
-          toast('No AI model found yet — this will fall back to GPU/CPU automatically. See Settings.');
-        }
+  // ---------------- resampling quality ----------------
+  function wireQualityChips() {
+    document.querySelectorAll('#qualityChips .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        setQualityChip(chip.dataset.quality);
+        markCustomIfManual();
       });
     });
   }
 
-  function resolveEngine(choice, dims) {
-    const gpuFits = state.caps.webgl2 && (dims.w * dims.h) <= GPU_SAFE_PIXELS;
-    if (choice === 'ai') return state.aiModelPresent ? 'ai' : (gpuFits ? 'gpu' : 'cpu');
-    if (choice === 'gpu') return gpuFits ? 'gpu' : 'cpu';
-    if (choice === 'cpu') return 'cpu';
-    // auto
-    if (state.aiModelPresent) return 'ai';
-    if (gpuFits) return 'gpu';
-    return 'cpu';
-  }
-
   // ---------------- enhancement controls ----------------
   function wireEnhancements() {
-    bindSlider('sharpenSlider', 'sharpenVal', (v) => state.sharpen = v);
-    bindSlider('denoiseSlider', 'denoiseVal', (v) => state.denoise = v);
-    bindSlider('edgeSlider', 'edgeVal', (v) => state.edge = v);
-    el('preserveAlpha').addEventListener('change', (e) => state.preserveAlpha = e.target.checked);
-    el('jpegCleanup').addEventListener('change', (e) => state.jpegCleanup = e.target.checked);
-    el('deblurToggle').addEventListener('change', (e) => state.deblur = e.target.checked);
+    el('detailSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('detailVal').textContent = pct + '%';
+      state.detailAmount = pct / 100;
+      markCustomIfManual();
+    });
+    el('sharpSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('sharpVal').textContent = pct + '%';
+      state.sharpAmount = pct / 100;
+      markCustomIfManual();
+    });
+
+    wireSeg('noiseSeg', (val) => { state.noiseReduction = val; markCustomIfManual(); });
+    wireSeg('jpegSeg', (val) => { state.jpegArtifact = val; markCustomIfManual(); });
+
+    el('textProtection').addEventListener('change', (e) => { state.textProtection = e.target.checked; markCustomIfManual(); });
+    el('portraitProtection').addEventListener('change', (e) => { state.portraitProtection = e.target.checked; markCustomIfManual(); });
+    el('localContrast').addEventListener('change', (e) => { state.localContrast = e.target.checked; markCustomIfManual(); });
   }
-  function bindSlider(inputId, labelId, onChange) {
-    const input = el(inputId);
-    input.addEventListener('input', () => {
-      const pct = parseInt(input.value, 10);
-      el(labelId).textContent = pct + '%';
-      onChange(pct / 100);
+
+  function wireSeg(containerId, onChange) {
+    const container = el(containerId);
+    container.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        container.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        onChange(btn.dataset.val);
+      });
     });
   }
 
-  function buildPasses(opts) {
-    opts = opts || {};
-    const passes = [];
-    if (!opts.skipSharpen && state.sharpen > 0) passes.push({ type: 'sharpen', amount: state.sharpen });
-    if (state.denoise > 0) passes.push({ type: 'denoise', amount: state.denoise });
-    if (state.jpegCleanup) passes.push({ type: 'denoise', amount: Math.max(state.denoise, 0.35) });
-    if (state.edge > 0) passes.push({ type: 'edge', amount: state.edge });
-    if (state.deblur) passes.push({ type: 'sharpen', amount: Math.min(1, (opts.skipSharpen ? 0.2 : state.sharpen) + 0.3) });
-    return passes;
+  function buildEnhanceConfig() {
+    return {
+      noiseReduction: state.noiseReduction,
+      jpegArtifact: state.jpegArtifact,
+      detailAmount: state.detailAmount,
+      sharpAmount: state.sharpAmount,
+      localContrast: state.localContrast,
+      textProtection: state.textProtection,
+      portraitProtection: state.portraitProtection
+    };
+  }
+
+  function stagesSummary(cfg) {
+    const s = [];
+    if (cfg.noiseReduction !== 'off') s.push('Noise reduction (' + cfg.noiseReduction + ')');
+    if (cfg.jpegArtifact !== 'off') s.push('JPEG artifact removal (' + cfg.jpegArtifact + ')');
+    if (cfg.detailAmount > 0) s.push('Detail enhancement');
+    if (cfg.localContrast) s.push('Local contrast');
+    if (cfg.sharpAmount > 0) s.push('Adaptive sharpening');
+    if (cfg.textProtection) s.push('Text/logo protection');
+    if (cfg.portraitProtection) s.push('Portrait protection');
+    return s.length ? s.join(', ') : 'None (resampling only)';
   }
 
   // ---------------- progress UI ----------------
@@ -352,6 +434,34 @@
   function setStage(stage) { el('progressStage').textContent = stage; }
 
   // ---------------- main run pipeline ----------------
+  function toCanvas(source, w, h) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(source, 0, 0, w, h);
+    return c;
+  }
+  function singlePassResize(source, dstW, dstH) {
+    const c = document.createElement('canvas');
+    c.width = dstW; c.height = dstH;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, dstW, dstH);
+    return c;
+  }
+
+  function estimateProcessingSeconds(dims, cfg, caps) {
+    const basePixels = dims.w * dims.h;
+    let complexity = 1;
+    if (cfg.noiseReduction !== 'off') complexity += 0.4;
+    if (cfg.jpegArtifact !== 'off') complexity += 0.3;
+    if (cfg.detailAmount > 0) complexity += 0.2;
+    if (cfg.localContrast) complexity += 0.3;
+    if (cfg.sharpAmount > 0) complexity += 0.2;
+    const throughput = (caps.isMobile ? 3.5e6 : 10e6) * Math.min(2, (caps.cores || 4) / 4);
+    return Math.max(1, Math.round((basePixels * complexity) / throughput));
+  }
+
   async function run() {
     if (!state.sourceImage) return;
 
@@ -371,17 +481,17 @@
     el('runBtn').disabled = true;
     el('progressWrap').classList.add('show');
     updateProgress(1, 'Preparing');
+    const cfgForEta = buildEnhanceConfig();
+    el('progressEta').textContent = `Rough estimate: ~${estimateProcessingSeconds(dims, cfgForEta, state.caps)}s (varies a lot by device)`;
     el('resultPanel').style.display = 'none';
     el('infoPanel').style.display = 'none';
     el('downloadPanel').style.display = 'none';
 
     const startTime = performance.now();
-    let tier = resolveEngine(state.engineChoice, dims);
-    let methodLabel = '', modelLabel = '—', gpuAccel = '—', fallbackNote = '';
+    const cfg = buildEnhanceConfig();
+    let backendLabel = '';
 
     try {
-      // Build the pipeline source: either the whole image, or (for
-      // fixed-aspect graphics presets) a pre-cropped canvas.
       let pipelineSource = state.sourceImage;
       let srcW = state.sourceW, srcH = state.sourceH;
       if (dims.crop) {
@@ -394,72 +504,74 @@
         srcW = dims.crop.w; srcH = dims.crop.h;
       }
 
-      let finalCanvas = null;
+      const needsResize = (dims.w !== srcW || dims.h !== srcH);
+      let workCanvas;
 
-      if (tier === 'ai') {
-        setStage('Loading AI model…');
-        const ok = await AIEngine.init((s) => setStage(s));
-        if (!ok) {
-          fallbackNote = 'AI model unavailable — using high-quality GPU/browser resampling. (' + (AIEngine.getLastError() || 'unknown reason') + ')';
-          toast('AI model unavailable — falling back automatically.');
-          tier = (state.caps.webgl2 && dims.w * dims.h <= GPU_SAFE_PIXELS) ? 'gpu' : 'cpu';
+      if (needsResize) {
+        // Phase 1: cleanup at original resolution (denoising a small
+        // source is cheaper and more correct than denoising after
+        // upscaling has already amplified the noise).
+        if (cfg.noiseReduction !== 'off' || cfg.jpegArtifact !== 'off') {
+          setStage('Cleaning noise / artifacts…');
+          const bitmap = await createImageBitmap(pipelineSource);
+          workCanvas = await runWorkerJob('cleanup', bitmap, srcW, srcH, { enhance: cfg });
         } else {
-          setStage('Running AI super-resolution…');
-          const aiCanvas = await AIEngine.upscaleTiled(
-            pipelineSource, srcW, srcH,
-            (pct) => updateProgress(pct * 0.65, 'Running AI super-resolution…'),
-            () => state.cancelled
-          );
-          setStage('Finishing (resize + enhancements)…');
-          const bitmap = await createImageBitmap(aiCanvas);
-          finalCanvas = await runWorkerJob(bitmap, aiCanvas.width, aiCanvas.height, {
-            resizeTo: { w: dims.w, h: dims.h },
-            passes: buildPasses()
-          });
-          methodLabel = 'AI Super Resolution (ONNX Runtime Web)';
-          modelLabel = AIEngine.MODEL_CONFIG.url.split('/').pop();
-          gpuAccel = state.caps.webgpu ? 'WebGPU (via ONNX Runtime)' : 'WASM (CPU inference)';
+          workCanvas = toCanvas(pipelineSource, srcW, srcH);
         }
-      }
 
-      if (tier === 'gpu' && !finalCanvas) {
-        setStage('GPU upscaling (WebGL2 Lanczos3)…');
-        updateProgress(15);
-        const gpuCanvas = Engine.gpuUpscale(pipelineSource, srcW, srcH, dims.w, dims.h, { sharpen: state.sharpen });
-        updateProgress(60);
-        const extraPasses = buildPasses({ skipSharpen: true });
-        if (extraPasses.length > 0) {
-          setStage('Refining (denoise / edge)…');
-          const bitmap = await createImageBitmap(gpuCanvas);
-          finalCanvas = await runWorkerJob(bitmap, dims.w, dims.h, { passes: extraPasses });
+        // Phase 2: resample to target resolution
+        setStage('Resampling…');
+        if (state.resampleQuality === 'fast') {
+          workCanvas = singlePassResize(workCanvas, dims.w, dims.h);
+          backendLabel = 'Single-pass high-quality resample (Fast)';
+          updateProgress(60);
+        } else if (state.resampleQuality === 'maximum' && state.caps.webgl2) {
+          try {
+            workCanvas = Engine.gpuResample(workCanvas, srcW, srcH, dims.w, dims.h);
+            backendLabel = 'WebGL2 two-pass Lanczos3 (Maximum Quality)';
+            updateProgress(60);
+          } catch (err) {
+            const bitmap = await createImageBitmap(workCanvas);
+            workCanvas = await runWorkerJob('resize', bitmap, srcW, srcH, { dstW: dims.w, dstH: dims.h });
+            backendLabel = 'Multi-pass stepped resample (Maximum Quality — WebGL2 unavailable, used CPU fallback)';
+          }
         } else {
-          finalCanvas = gpuCanvas;
-          updateProgress(95);
+          const bitmap = await createImageBitmap(workCanvas);
+          workCanvas = await runWorkerJob('resize', bitmap, srcW, srcH, { dstW: dims.w, dstH: dims.h });
+          backendLabel = 'Multi-pass stepped resample (Balanced)';
         }
-        methodLabel = 'GPU Enhanced Upscaling (WebGL2 Lanczos3 + shader sharpen)';
-        gpuAccel = 'WebGL2';
+
+        // Phase 3: finishing enhancement at target resolution
+        if (cfg.detailAmount > 0 || cfg.localContrast || cfg.sharpAmount > 0) {
+          setStage('Adaptive sharpening / detail enhancement…');
+          const bitmap = await createImageBitmap(workCanvas);
+          workCanvas = await runWorkerJob('finish', bitmap, dims.w, dims.h, { enhance: cfg });
+        } else {
+          updateProgress(100, 'Done');
+        }
+      } else {
+        // Enhance-only, no resampling needed
+        const anyStage = cfg.noiseReduction !== 'off' || cfg.jpegArtifact !== 'off' ||
+          cfg.detailAmount > 0 || cfg.localContrast || cfg.sharpAmount > 0;
+        if (anyStage) {
+          setStage('Enhancing…');
+          const bitmap = await createImageBitmap(pipelineSource);
+          workCanvas = await runWorkerJob('full', bitmap, srcW, srcH, { enhance: cfg });
+        } else {
+          workCanvas = toCanvas(pipelineSource, srcW, srcH);
+          updateProgress(100, 'Done');
+        }
+        backendLabel = 'No resampling needed (enhance-only)';
       }
 
-      if (tier === 'cpu' && !finalCanvas) {
-        setStage('High-quality resampling (tiled, CPU)…');
-        const bitmap = await createImageBitmap(pipelineSource);
-        finalCanvas = await runWorkerJob(bitmap, srcW, srcH, {
-          resizeTo: { w: dims.w, h: dims.h },
-          passes: buildPasses()
-        });
-        methodLabel = 'High Quality Resampling (progressive, tiled)';
-        gpuAccel = 'None (CPU)';
-      }
+      state.finalCanvas = workCanvas;
 
-      // above-4K GPU note
-      if (state.engineChoice !== 'cpu' && tier === 'cpu' && dims.w * dims.h > GPU_SAFE_PIXELS && !fallbackNote) {
-        fallbackNote = `GPU tier auto-skipped for ${dims.w}×${dims.h} to avoid exceeding mobile GPU memory limits — used tiled CPU resampling instead.`;
-      }
+      setStage('Analyzing result…');
+      let afterMetrics = null;
+      try { afterMetrics = await analyzeImage(workCanvas); } catch (e) { /* non-fatal */ }
+      state.afterMetrics = afterMetrics;
 
-      updateProgress(100, 'Done');
-      state.finalCanvas = finalCanvas;
-
-      finalCanvas.toBlob((blob) => {
+      workCanvas.toBlob((blob) => {
         if (state.resultBlobUrl) URL.revokeObjectURL(state.resultBlobUrl);
         state.resultBlobUrl = URL.createObjectURL(blob);
 
@@ -469,35 +581,32 @@
           const rect = el('compare').getBoundingClientRect();
           el('afterImg').style.setProperty('--cw', rect.width + 'px');
           setHandle(50);
+          setZoomPercent(100);
         };
 
         el('infoSrcRes').textContent = `${state.sourceW}×${state.sourceH}`;
         el('infoOutRes').textContent = `${dims.w}×${dims.h}`;
-        el('infoMethod').textContent = methodLabel + (fallbackNote ? ' *' : '');
-        el('infoModel').textContent = modelLabel;
-        el('infoGpu').textContent = gpuAccel;
+        el('infoMethod').textContent = backendLabel;
+        el('infoStages').textContent = stagesSummary(cfg);
         el('infoTime').textContent = ((performance.now() - startTime) / 1000).toFixed(1) + 's';
         el('infoMem').textContent = mem.estimatedLabel;
         el('infoFileSize').textContent = Engine.formatBytes(blob.size);
-
-        if (fallbackNote) {
-          const noteEl = document.createElement('p');
-          noteEl.className = 'modal-sub';
-          noteEl.style.marginTop = '12px';
-          noteEl.textContent = '* ' + fallbackNote;
-          el('infoPanel').appendChild(noteEl);
-        }
+        el('infoSharpness').textContent = state.beforeMetrics && afterMetrics
+          ? `${state.beforeMetrics.sharpness} → ${afterMetrics.sharpness}`
+          : '—';
 
         el('resultPanel').style.display = 'block';
         el('infoPanel').style.display = 'block';
         el('downloadPanel').style.display = 'block';
         el('progressWrap').classList.remove('show');
+        el('progressEta').textContent = '';
         el('runBtn').disabled = false;
         el('resultPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 'image/png');
 
     } catch (err) {
       el('progressWrap').classList.remove('show');
+      el('progressEta').textContent = '';
       el('runBtn').disabled = false;
       if (err && err.cancelled) {
         toast('Processing cancelled.');
@@ -508,14 +617,13 @@
     }
   }
 
-  // ---------------- compare slider ----------------
+  // ---------------- compare slider + pan/zoom ----------------
   function wireCompare() {
     const compare = el('compare');
     const handle = el('handle');
-    const afterWrap = el('afterWrap');
     let dragging = false;
 
-    handle.addEventListener('pointerdown', (e) => { dragging = true; handle.setPointerCapture(e.pointerId); });
+    handle.addEventListener('pointerdown', (e) => { dragging = true; handle.setPointerCapture(e.pointerId); e.stopPropagation(); });
     window.addEventListener('pointerup', () => dragging = false);
     compare.addEventListener('pointermove', (e) => {
       if (!dragging) return;
@@ -528,9 +636,15 @@
       setHandle(((e.clientX - rect.left) / rect.width) * 100);
     });
 
-    el('zoomIn').addEventListener('click', () => setZoom(state.zoom + 0.25));
-    el('zoomOut').addEventListener('click', () => setZoom(state.zoom - 0.25));
-    el('zoomReset').addEventListener('click', () => setZoom(1));
+    el('fitBtn').addEventListener('click', () => { setZoomPercent(100); el('compareViewport').scrollLeft = 0; el('compareViewport').scrollTop = 0; });
+    el('oneToOneBtn').addEventListener('click', () => {
+      if (!state.finalCanvas) return;
+      const viewportWidth = el('compareViewport').clientWidth;
+      const pct = (state.finalCanvas.width / viewportWidth) * 100;
+      setZoomPercent(pct);
+    });
+    el('zoomInBtn').addEventListener('click', () => setZoomPercent(state.zoomPct * 1.25));
+    el('zoomOutBtn').addEventListener('click', () => setZoomPercent(state.zoomPct / 1.25));
   }
 
   function setHandle(pct) {
@@ -539,45 +653,65 @@
     el('handle').style.left = pct + '%';
   }
 
-  function setZoom(z) {
-    state.zoom = Math.max(0.5, Math.min(4, z));
-    const compare = el('compare');
-    compare.style.transform = `scale(${state.zoom})`;
-    compare.style.transformOrigin = 'center top';
-    el('zoomLabel').textContent = Math.round(state.zoom * 100) + '%';
+  function setZoomPercent(pct) {
+    state.zoomPct = Math.max(50, Math.min(600, pct));
+    el('compare').style.width = state.zoomPct + '%';
+    el('zoomLabel').textContent = Math.round(state.zoomPct) === 100 ? 'Fit' : Math.round(state.zoomPct) + '%';
   }
 
-  // ---------------- download ----------------
+  // ---------------- download / copy ----------------
   function wireDownload() {
-    document.querySelectorAll('#downloadPanel .chip').forEach(chip => {
+    document.querySelectorAll('#downloadPanel .chip[data-format]').forEach(chip => {
       chip.addEventListener('click', () => {
-        document.querySelectorAll('#downloadPanel .chip').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('#downloadPanel .chip[data-format]').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         state.resultFormat = chip.dataset.format;
+        el('jpegQualityRow').style.display = state.resultFormat === 'jpeg' ? 'block' : 'none';
       });
+    });
+
+    el('jpegQualitySlider').addEventListener('input', (e) => {
+      const v = parseInt(e.target.value, 10);
+      el('jpegQualityVal').textContent = v + '%';
+      state.jpegQuality = v / 100;
     });
 
     el('downloadBtn').addEventListener('click', () => {
       if (!state.finalCanvas) return;
-      const fmt = state.resultFormat;
-      const mime = fmt === 'jpeg' ? 'image/jpeg' : fmt === 'webp' ? 'image/webp' : 'image/png';
-      const quality = fmt === 'png' ? undefined : 0.92;
-
-      state.finalCanvas.toBlob((blob) => {
+      exportBlob((blob) => {
         const url = URL.createObjectURL(blob);
         const base = (state.sourceFile ? state.sourceFile.name.replace(/\.[^/.]+$/, '') : 'image');
+        const ext = state.resultFormat === 'jpeg' ? 'jpg' : state.resultFormat;
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${base}-${state.finalCanvas.width}x${state.finalCanvas.height}.${fmt === 'jpeg' ? 'jpg' : fmt}`;
+        a.download = `${base}-${state.finalCanvas.width}x${state.finalCanvas.height}.${ext}`;
         document.body.appendChild(a);
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 4000);
         el('infoFileSize').textContent = Engine.formatBytes(blob.size);
-      }, mime, quality);
+      });
+    });
+
+    el('copyBtn').addEventListener('click', async () => {
+      if (!state.finalCanvas || !state.caps.clipboardImage) return;
+      try {
+        const blob = await new Promise((resolve) => state.finalCanvas.toBlob(resolve, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        toast('Copied to clipboard.');
+      } catch (err) {
+        toast('Copy failed: ' + err.message);
+      }
     });
 
     el('resetBtn').addEventListener('click', resetAll);
+  }
+
+  function exportBlob(cb) {
+    const fmt = state.resultFormat;
+    const mime = fmt === 'jpeg' ? 'image/jpeg' : fmt === 'webp' ? 'image/webp' : 'image/png';
+    const quality = fmt === 'png' ? undefined : (fmt === 'jpeg' ? state.jpegQuality : 0.92);
+    state.finalCanvas.toBlob(cb, mime, quality);
   }
 
   function resetAll() {
@@ -588,8 +722,11 @@
     state.sourceFile = null;
     state.finalCanvas = null;
     state.resultBlobUrl = null;
+    state.beforeMetrics = null;
+    state.afterMetrics = null;
     el('fileInput').value = '';
     el('sourceInfo').classList.remove('show');
+    el('beforeAnalysisPanel').style.display = 'none';
     el('runBtn').disabled = true;
     el('runBtn').textContent = 'Select an image to begin';
     el('resultPanel').style.display = 'none';
@@ -604,68 +741,20 @@
     el('cancelBtn').addEventListener('click', cancelCurrentJob);
   }
 
-  // ---------------- settings modal ----------------
-  function wireSettings() {
-    el('settingsBtn').addEventListener('click', async () => {
-      const cfg = ApiEngine.getConfig();
-      if (cfg) {
-        el('apiEndpointInput').value = cfg.endpoint || '';
-        el('apiKeyInput').value = cfg.apiKey || '';
-        el('apiAuthHeaderInput').value = cfg.authHeader || 'Authorization';
-        el('apiAuthPrefixInput').value = cfg.authPrefix || '';
-      }
-      el('modelUrlInput').value = AIEngine.MODEL_CONFIG.url;
-      el('settingsModal').classList.add('show');
-      el('modelStatusText').textContent = 'Checking for a local model file…';
-      const present = await AIEngine.checkModelPresence();
-      el('modelStatusText').textContent = present
-        ? `✓ Model found at ${AIEngine.MODEL_CONFIG.url}`
-        : `No file at ${AIEngine.MODEL_CONFIG.url} yet. See README → "How to add a real AI super-resolution model".`;
-    });
-    el('closeSettingsBtn').addEventListener('click', () => el('settingsModal').classList.remove('show'));
-
-    el('saveSettingsBtn').addEventListener('click', async () => {
-      AIEngine.MODEL_CONFIG.url = el('modelUrlInput').value.trim() || AIEngine.MODEL_CONFIG.url;
-
-      const endpoint = el('apiEndpointInput').value.trim();
-      const apiKey = el('apiKeyInput').value.trim();
-      if (endpoint && apiKey) {
-        ApiEngine.saveConfig({
-          endpoint,
-          apiKey,
-          authHeader: el('apiAuthHeaderInput').value.trim() || 'Authorization',
-          authPrefix: el('apiAuthPrefixInput').value
-        });
-        toast('Settings saved.');
-      } else {
-        toast('Model path saved.');
-      }
-      el('settingsModal').classList.remove('show');
-      await checkAiAvailability();
-    });
-
-    el('clearApiBtn').addEventListener('click', () => {
-      ApiEngine.clearConfig();
-      el('apiEndpointInput').value = '';
-      el('apiKeyInput').value = '';
-      toast('API key cleared.');
-    });
-  }
-
   // ---------------- init ----------------
   function init() {
     initCapabilities();
     wireModeTabs();
     wireUpload();
+    wirePresetChips();
     wirePresets();
-    wireEngineCards();
+    wireQualityChips();
     wireEnhancements();
     wireCompare();
     wireDownload();
     wireCancel();
-    wireSettings();
     el('runBtn').addEventListener('click', run);
-    checkAiAvailability();
+    applyPreset(PRESETS.photo);
   }
 
   document.addEventListener('DOMContentLoaded', init);

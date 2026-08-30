@@ -1,6 +1,6 @@
-# UPRES PRO — Image Upscaler & Graphics Enhancer
+# UPRES — Non-AI Image Upscaler & Graphics Enhancer
 
-A static, client-side, mobile-first web app for upscaling images to 4K/DCI-4K/8K and enhancing social/poster graphics — pure HTML/CSS/vanilla JS, no build step, no backend, GitHub Pages ready.
+A static, client-side, mobile-first web app for upscaling images to 4K/DCI-4K/8K and enhancing social/poster graphics — pure HTML/CSS/vanilla JS, **no AI, no machine learning, no neural networks**, no build step, no backend, GitHub Pages ready.
 
 ```
 upres/
@@ -8,87 +8,98 @@ upres/
 ├── style.css
 ├── script.js
 ├── js/
-│   ├── engine.js       — capability detection, memory safety, WebGL2 Lanczos3 GPU tier, CPU resample
-│   ├── worker.js        — Web Worker: tiled resize + sharpen/denoise/edge filters
-│   ├── ai-engine.js     — optional AI Super Resolution (ONNX Runtime Web), lazy-loaded
-│   └── api-engine.js    — optional bring-your-own-key cloud API integration
-├── models/               — put an .onnx super-resolution model here to enable AI mode (empty by default)
-├── assets/               — (unused by default, room for icons/screenshots)
+│   ├── engine.js     — capability detection, memory safety, WebGL2 Lanczos3 resample
+│   ├── presets.js     — named parameter bundles (Photo / Social / News GFX / Portrait / Max Quality)
+│   └── worker.js       — the actual multi-stage processing pipeline, tiled, off the main thread
+├── assets/               — (unused by default)
 └── README.md
 ```
 
-## 1. Deploy to GitHub Pages
+Everything runs in the browser. No image ever leaves the device.
 
-1. Create/use a repo and add all files above at the **repo root** (keep the `js/` and `models/` folder structure — paths in the code are relative).
-2. Push to GitHub.
-3. **Settings → Pages → Source → Deploy from a branch**, branch `main`, folder `/ (root)`.
-4. Live at `https://<username>.github.io/<repo-name>/`.
+## 1. Deploy to GitHub Pages — from an Android phone
 
-No `npm install`, no bundler, no server config. Everything runs from static files.
+You don't need a laptop for this. Two realistic paths on Android:
 
-## 2. What actually happens when you click "Upscale"
+**Path A — GitHub's own mobile web editor (simplest, no app install):**
+1. Open github.com in Chrome, sign in, create a new repository (e.g. `upres`).
+2. Tap **Add file → Create new file**. Type `index.html` as the filename, paste its contents (request the file contents from wherever you're reading this, or copy from your own working copy), then **Commit**.
+3. Repeat **Add file → Create new file** for `style.css`, `script.js`, `js/engine.js`, `js/presets.js`, `js/worker.js`, and `README.md`. Typing `js/engine.js` as the filename automatically creates the `js/` folder — you don't need a separate step for that.
+4. Once all files are committed: **Settings → Pages → Source → Deploy from a branch**, branch `main`, folder `/ (root)`, **Save**.
+5. Your app is live at `https://<username>.github.io/<repo-name>/` within a minute or two.
 
-The app picks one of three processing tiers, and always tells you honestly which one it used in the **Processing Information** panel after a run:
+**Path B — a Git-capable app (better if you're iterating a lot):**
+1. Install **Working Copy** (iOS) or, on Android, an app like **Termux** (`pkg install git`) or **GitJournal**/**MGit**. Termux + git gives you a real `git clone` / `git commit` / `git push` workflow from your phone's storage.
+2. Clone your empty repo, copy these files into it (e.g. via a file manager or `termux-setup-storage` to access Downloads), `git add -A && git commit -m "upres" && git push`.
+3. Enable Pages as in step 4 above.
 
-| Tier | What it is | When it's used |
-|---|---|---|
-| **AI Super Resolution** | A real neural super-resolution model (e.g. Real-ESRGAN), run in-browser via [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/), tiled so it doesn't blow up memory. | Only if you've added a model file (see §3) — otherwise the app **does not pretend**; it says so and falls back automatically. |
-| **GPU Enhanced** | A genuine two-pass separable **Lanczos3** upscale shader running on WebGL2, plus a GPU unsharp-mask pass. This is real GPU-accelerated resampling, not AI. | When WebGL2 is available and the target is at or below ~4K/DCI-4K sized (see §5 on why 8K skips this tier). |
-| **High Quality Resampling** | Progressive `<canvas>` resizing (never more than 2× per step, which avoids the softening/aliasing of one giant resize), run tile-by-tile inside a Web Worker via `OffscreenCanvas` so the UI thread never blocks. | Always available; the fallback of last resort, and the tier used for 8K exports regardless of what's selected, for memory safety. |
+Either way: no `npm install`, no bundler, nothing to compile. The files as given are the deployed files.
 
-None of these tiers "hallucinate" detail the way a full diffusion-based upscaler can — the AI tier is the only one that can add plausible texture/detail beyond what's in the source, and only if you've supplied a real model.
+## 2. What "non-AI" actually means here, concretely
 
-## 3. How to add a real AI super-resolution model
+Every stage below is ordinary, decades-old, published image-processing math — the kind you'd find in a signal-processing textbook, not a research paper about neural networks. Nothing is learned from data; nothing can hallucinate detail that wasn't in the source.
 
-The app looks for a model at `./models/realesr-general-x4v3.onnx` (configurable in **Settings** or by editing `MODEL_CONFIG.url` in `js/ai-engine.js`). It is not bundled, on purpose — a real model is tens of megabytes, and shipping a silent third-party download would be exactly the kind of thing this app is trying to avoid.
+| Stage | What it is |
+|---|---|
+| **Resampling — Fast** | One `canvas.drawImage()` call at high smoothing quality. Quick, lower quality on big jumps. |
+| **Resampling — Balanced** | Progressive stepped resize: every jump is capped at 2×, run as a sequence (e.g. 1×→2×→4×→final) instead of one giant resize. A single huge resize jump looks soft/aliased; stepping it doesn't. |
+| **Resampling — Maximum** | A genuine two-pass separable **Lanczos3** convolution running as a WebGL2 fragment shader (real sinc-based interpolation, not just `imageSmoothingQuality`), falling back to the stepped CPU resize if WebGL2 isn't available. |
+| **Noise reduction** | Edge-aware smoothing ("bilateral-lite"): each pixel is averaged with its neighborhood, but neighbors are weighted down the more their color differs from the center pixel — so flat/noisy regions get smoothed while real edges are mostly left alone. Off/Low/Medium/High map to increasing radius + tolerance. |
+| **JPEG artifact removal** | The same edge-aware smoothing function, with a separate radius/tolerance preset tuned to be gentler and broader — this is a heuristic smoothing pass, not true DCT block-boundary detection (that would need access to the original JPEG coefficients, which the browser doesn't expose once an image is decoded to pixels). |
+| **Detail enhancement** | Classic high-pass-add: `output = original + amount × (original − blur(original))` with a small blur radius — recovers fine texture that resampling softens. |
+| **Local contrast** | The same high-pass-add technique with a much larger blur radius, at a fixed modest weight — boosts mid-scale tonal "pop" separately from fine detail. |
+| **Adaptive sharpening** | Unsharp masking (`original + amount × (original − blur)`) where `amount` is scaled per-pixel by local Sobel edge strength (gentle in smooth areas, stronger on edges/text) and by the protection masks below. A local min/max clamp on the result suppresses the white/black ringing halos that plain unsharp masking produces around strong edges. |
+| **Text/logo protection** | A Sobel-edge-density mask, dilated slightly to cover glyph interiors, not just outlines. Where it's high, noise reduction is held back (so crisp edges aren't smoothed away) and sharpening is boosted. Heuristic, not OCR or connected-component text detection — it responds to "lots of local contrast/edges," which text and logos reliably have. |
+| **Portrait protection** | A classic RGB skin-tone heuristic (specific R/G/B relationships), combined with a low-local-edge-magnitude requirement so it only flags smooth skin (cheeks, forehead) — not eyes, hair, or eyebrows, which stay normally sharpened. **This is a color heuristic, not face detection.** It will occasionally mis-flag skin-colored non-skin surfaces (wood, terracotta, some sunset skies), which is exactly why it's an opt-in toggle. |
 
-**Steps:**
+### Pipeline order
 
-1. Get a Real-ESRGAN (or similar RRDBNet-family) model already exported to ONNX. A few public sources as of writing (verify licenses and that the file still exists before using):
-   - `huggingface.co/qualcomm/Real-ESRGAN-x4plus` — `Real-ESRGAN-x4plus.onnx`
-   - `huggingface.co/SceneWorks/real-esrgan-onnx` — `real_esrgan_x4.onnx` / `real_esrgan_x2.onnx`
-   - Or export your own from the original [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) PyTorch weights using `torch.onnx.export`.
-2. Rename it (or update the path) and place it at `models/realesr-general-x4v3.onnx` in your repo.
-3. Open **Settings** in the app (or edit `js/ai-engine.js` directly) and confirm/adjust:
-   - `inputName` / `outputName` — the exact tensor names your export uses. Inspect with [Netron](https://netron.app) if unsure.
-   - `scale` — 2 or 4, matching the model variant.
-   - `tileSize` / `overlap` — lower `tileSize` (e.g. 96) if you see out-of-memory errors on mobile; raise `overlap` if you see visible seams between tiles.
-4. Reload the app. The engine card and Settings modal will report "Model found" once the file is reachable, and the AI tier becomes selectable — no code changes needed beyond step 3 if your model's IO matches the RRDBNet default.
+```
+Original
+  ↓  (only if Noise Reduction / JPEG Artifact Removal is on)
+Tiled cleanup at ORIGINAL resolution — denoise, deblock
+  ↓
+Multi-pass / Lanczos3 resample to target resolution
+  ↓  (only if Detail / Local Contrast / Sharpening is on)
+Tiled finishing pass at TARGET resolution — detail, local contrast, adaptive sharpen
+  ↓
+Final output
+```
 
-GitHub Pages serves the model as a normal static file — no server-side code needed, and it's lazy-loaded (the ~1MB ONNX Runtime Web library and the model itself only download the first time someone actually runs AI mode, not on page load).
+Cleaning noise **before** the resample (not after) is deliberate: denoising a small source image is both cheaper and more correct than denoising after upscaling has already spread and amplified that noise across more pixels. When neither Noise Reduction nor JPEG Artifact Removal is enabled, that phase is skipped entirely rather than run as a no-op.
 
-## 4. Configuring an optional cloud API (bring your own key)
+## 3. Quality metrics — measurable, not invented
 
-Entirely optional, and the app is fully functional without it. In **Settings → Cloud API**, you can point the app at any HTTP endpoint that accepts a base64 image and returns either a base64 image or a URL to one (see `js/api-engine.js` for the exact request/response shape, and adjust it to match your provider — every provider's API looks slightly different).
+The Source Quality Analysis and Processing Information panels only show numbers that are actually computed, never a made-up "quality score":
 
-Your key is stored **only** in this browser's `localStorage`, under the key `upres_api_config_v1`. It is never written into any file in this repo, never sent anywhere except the endpoint you configure, and clearing it (button in Settings) removes it immediately.
+- **Sharpness** — variance of the Laplacian, a standard no-reference focus/sharpness metric. Higher = crisper. Shown before → after so you can see whether a run actually increased measured sharpness.
+- **Edge density** — percentage of sampled pixels with Sobel gradient magnitude above a fixed threshold.
+- **Noise estimate (σ)** — [Immerkær's fast noise estimation](https://scholar.google.com/scholar?q=immerkaer+fast+noise+variance+estimation) formula: convolve with a Laplacian-of-Gaussian-style kernel, take the mean absolute response, normalize. A real published estimator.
 
-**Important CORS caveat:** many cloud AI APIs (Replicate, various upscaler SaaS products) don't allow direct browser-to-API calls from an arbitrary origin — you may need a small serverless proxy (a Cloudflare Worker, Vercel function, etc.) that forwards the request and attaches your key server-side instead of exposing it client-side. That's outside the scope of a static GitHub Pages app; this integration point is designed for providers that do support direct browser calls with a user-supplied key, or for your own proxy's URL.
+All three are computed on a downsampled (max 512px) grayscale sample so analysis stays fast regardless of source/output size, and run in the Web Worker so they never block the UI.
 
-## 5. Memory safety, tiling, and 8K exports
+## 4. Memory safety on 8K exports
 
-An 8K RGBA canvas alone is `7680 × 4320 × 4 bytes ≈ 132 MB`, and a naive pipeline can hold several such buffers at once — that's how mobile tabs crash. This app avoids that in three ways:
+An 8K RGBA canvas is `7680 × 4320 × 4 bytes ≈ 132 MB` on its own, and a naive multi-stage pipeline can multiply that several times over — that's how mobile tabs crash. This app avoids that by:
 
-- **Tiling.** The CPU tier and the AI tier both process the image in small tiles (default 512px on desktop, 384–512px on mobile, configurable in `Engine.suggestTileSize`), with a few pixels of overlap so filters don't show seams at tile boundaries. Peak memory stays bounded to a handful of small tile buffers, not one giant one.
-- **GPU tier auto-limit.** Whole-image WebGL2 textures at 8K can exceed a mobile GPU's texture memory. Above ~9.5 megapixels of output (comfortably covers 4K UHD and DCI 4K), the app automatically routes to the tiled CPU pipeline instead — even if you explicitly picked "GPU Enhanced" — and says so honestly in the Processing Information panel.
-- **Upfront warning.** Before starting a high-memory export, the app estimates required memory against a conservative budget for the device (using `navigator.deviceMemory` where available) and asks for confirmation if the estimate is high-risk, rather than silently attempting it and possibly crashing the tab.
-- **Cancel.** The "Cancel processing" button stops an in-flight Worker job (and, for the AI tier, stops between tiles) rather than requiring a page reload.
+- **Tiling every per-pixel filter.** Noise reduction, JPEG artifact removal, detail enhancement, local contrast, and sharpening all run tile-by-tile (default 320–640px depending on device memory, see `Engine.suggestTileSize`) with a 12px overlap so filters see real neighboring pixels at tile boundaries instead of an artificial edge. Peak memory during these stages stays bounded to a handful of small tile buffers, never one buffer the size of the whole image.
+- **A single full-resolution buffer only exists at the resample step and the final output**, both of which are unavoidable — the final image has to exist in memory once to be exported. Everything in between is tiled.
+- **An upfront estimate + confirmation.** Before starting a high-memory export, the app estimates required memory against a conservative per-device budget (using `navigator.deviceMemory` where available) and asks for confirmation rather than silently attempting it.
+- **Cancel** actually stops an in-flight Worker job between tiles, not just the UI.
 
-## 6. Mobile performance tips
+If a phone genuinely can't handle an 8K export, the honest outcome is that it's slow or the browser tab restarts it — there's no way to fully prevent that from a static web page with no server-side processing, but tiling keeps the odds firmly in your favor compared to a naive single-buffer approach.
 
-- Prefer the **4K UHD** or **2×/4×** presets over 8K on mid-range phones; 8K is supported but slow and memory-hungry by nature, not a limitation specific to this app.
-- The **GPU Enhanced** tier is usually both faster and lower-memory than the CPU tier for anything it supports (see the 4K/DCI-4K limit above) — leave the engine on **Auto** unless you have a specific reason not to.
-- If you add an AI model, keep `tileSize` modest (96–192px) for low-RAM Android devices; larger tiles are faster per-pixel but risk out-of-memory failures on inference.
-- Noise reduction and edge enhancement passes each add a full tiled convolution pass — stacking all three enhancement sliders high will roughly triple CPU-tier processing time. For most photos, moderate sharpening alone goes a long way.
+## 5. Mobile performance tips
 
-## 7. Which processing method actually ran?
+- **Balanced** resampling quality is the sensible default; **Maximum** (Lanczos3) looks best but costs more, **Fast** is for quick previews.
+- Noise Reduction and JPEG Artifact Removal are each a full tiled edge-aware smoothing pass — stacking both at High roughly doubles that portion of processing time. Most clean photos don't need either.
+- Local Contrast uses a large blur radius and is the single most expensive enhancement toggle; leave it off unless you specifically want the effect.
+- 8K is supported but is inherently the slowest, most memory-hungry option on any device, phone or otherwise — that's the nature of 33 million pixels, not a limitation specific to this app.
 
-Every run ends with a **Processing Information** panel showing: source resolution, output resolution, the processing method actually used (with an honest note if it silently fell back from what you selected), the AI model filename if applicable, GPU acceleration status, processing time, estimated memory, and output file size. If AI mode was selected but no model was available, it explicitly says:
+## 6. Processing Mode presets
 
-> "AI model unavailable — using high-quality GPU/browser resampling."
+Photo / Social Media / News GFX / Portrait / Max Quality are just starting bundles of the same parameters you can see and adjust yourself (defined plainly in `js/presets.js` — nothing hidden). Changing any individual control after picking a preset automatically switches the mode to **Custom** so your adjustment isn't silently overwritten.
 
-rather than mislabeling ordinary resampling as AI enhancement.
+## 7. Privacy
 
-## 8. Privacy
-
-No image ever leaves the browser unless you explicitly configure and use the optional cloud API in §4. No analytics, no tracking, no login, no database.
+No image ever leaves the browser. No analytics, no tracking, no login, no database, no external API calls of any kind.
