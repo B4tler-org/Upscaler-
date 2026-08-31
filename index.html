@@ -28,6 +28,14 @@
     </div>
   </header>
 
+  <!-- TOP-LEVEL IMAGE / VIDEO TABS -->
+  <div class="mode-tabs top-level-tabs">
+    <button class="mode-tab active" data-toptab="image">Image</button>
+    <button class="mode-tab" data-toptab="video">Video</button>
+  </div>
+
+  <div id="imageTab">
+
   <!-- MODE -->
   <div class="mode-tabs">
     <button class="mode-tab active" data-mode="upscale">Upscale</button>
@@ -241,6 +249,176 @@
     </div>
   </section>
 
+  </div><!-- /imageTab -->
+
+  <div id="videoTab" style="display:none;">
+
+    <div class="local-badge-row">
+      <span class="local-badge">🔒 LOCAL PROCESSING</span>
+    </div>
+    <p class="disclaimer">High-quality resampling and enhancement — not AI-generated detail. Nothing is uploaded; everything happens in this browser tab.</p>
+
+    <div class="capsule-row" id="videoCapabilityRow">
+      <span class="capsule" id="capTrackProcessor"><span class="dot"></span>Worker-offloaded capture</span>
+      <span class="capsule" id="capMediaRecorder"><span class="dot"></span>WebM export</span>
+    </div>
+
+    <!-- SOURCE VIDEO -->
+    <section class="panel" id="videoUploadPanel">
+      <p class="panel-title">01 · Source Video</p>
+      <div id="videoDropzone">
+        <input type="file" id="videoFileInput" accept="video/*">
+        <div class="icon">Tap or drop</div>
+        <p>Choose a video to upscale</p>
+        <p class="sub">Up to 1 GB — processed locally, never uploaded</p>
+      </div>
+      <video id="videoPreviewEl" style="display:none; width:100%; border-radius:var(--radius-sm); margin-top:14px;" muted playsinline controls></video>
+      <div class="source-info" id="videoSourceInfo">
+        <div><b id="vSrcDims">—</b>Resolution</div>
+        <div><b id="vSrcDuration">—</b>Duration</div>
+        <div><b id="vSrcFps">—</b>Frame rate</div>
+        <div><b id="vSrcSize">—</b>File size</div>
+        <div><b id="vSrcCodec">—</b>Container / codec</div>
+        <div><b id="vSrcAudio">—</b>Audio track</div>
+      </div>
+    </section>
+
+    <!-- OUTPUT RESOLUTION -->
+    <section class="panel" id="videoOutputPanel" style="display:none;">
+      <p class="panel-title">02 · Output Resolution</p>
+      <div class="chip-grid" id="videoResChips">
+        <button class="chip active" data-vres="original">Original</button>
+        <button class="chip" data-vres="720">720p</button>
+        <button class="chip" data-vres="1080">1080p</button>
+        <button class="chip" data-vres="1440">1440p / 2K</button>
+        <button class="chip" data-vres="2160">2160p / 4K</button>
+      </div>
+      <p class="hint" style="margin-top:10px;" id="videoEstimate">—</p>
+    </section>
+
+    <!-- PROCESSING MODE -->
+    <section class="panel" id="videoModePanel" style="display:none;">
+      <p class="panel-title">03 · Processing Mode</p>
+      <div class="chip-grid" id="videoModeChips">
+        <button class="chip" data-vmode="social">Social Media</button>
+        <button class="chip" data-vmode="max">Max Quality</button>
+        <button class="chip active" data-vmode="balanced">Balanced</button>
+        <button class="chip" data-vmode="clean">Clean / Natural</button>
+      </div>
+      <div class="chip-grid" id="videoAspectChips" style="display:none; margin-top:10px;">
+        <button class="chip active" data-vaspect="169">16:9</button>
+        <button class="chip" data-vaspect="916">9:16</button>
+        <button class="chip" data-vaspect="11">1:1</button>
+      </div>
+    </section>
+
+    <!-- ADVANCED SETTINGS -->
+    <section class="panel" id="videoAdvancedPanel" style="display:none;">
+      <details class="advanced">
+        <summary>Advanced settings</summary>
+
+        <div class="select-row">
+          <label>Sharpening</label>
+          <div class="seg-control" id="vSharpSeg">
+            <button data-val="off">Off</button>
+            <button data-val="low">Low</button>
+            <button data-val="medium" class="active">Medium</button>
+            <button data-val="high">High</button>
+          </div>
+        </div>
+        <div class="select-row">
+          <label>Denoise</label>
+          <div class="seg-control" id="vDenoiseSeg">
+            <button data-val="off" class="active">Off</button>
+            <button data-val="low">Low</button>
+            <button data-val="medium">Medium</button>
+          </div>
+        </div>
+        <div class="select-row">
+          <label>Resampling</label>
+          <div class="seg-control" id="vResampleSeg">
+            <button data-val="lanczos" class="active">Lanczos</button>
+            <button data-val="bicubic">Bicubic</button>
+          </div>
+        </div>
+        <div class="select-row">
+          <label>Bitrate</label>
+          <div class="seg-control" id="vBitrateSeg">
+            <button data-val="auto" class="active">Auto</button>
+            <button data-val="high">High Quality</button>
+            <button data-val="custom">Custom</button>
+          </div>
+        </div>
+        <div class="custom-dims" id="vBitrateCustomRow" style="display:none;">
+          <input type="number" id="vBitrateCustom" placeholder="Mbps" min="1" max="100" value="12">
+        </div>
+        <div class="select-row">
+          <label>FPS</label>
+          <div class="seg-control" id="vFpsSeg">
+            <button data-val="original" class="active">Original</button>
+            <button data-val="24">24</button>
+            <button data-val="30">30</button>
+            <button data-val="60">60</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="label">Preserve audio</div><div class="sub">Passes the original audio track straight through, untouched</div></div>
+          <label class="switch"><input type="checkbox" id="vPreserveAudio" checked><span class="track"></span></label>
+        </div>
+      </details>
+    </section>
+
+    <div class="mem-banner" id="videoMemBanner"></div>
+
+    <!-- PROCESS -->
+    <div class="actions-row">
+      <button class="primary" id="videoRunBtn" disabled>Select a video to begin</button>
+    </div>
+    <div class="progress-wrap" id="videoProgressWrap">
+      <div class="progress-label"><span id="videoProgressStage">Idle</span><span id="videoProgressPct">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="videoProgressFill"></div></div>
+      <div class="video-progress-stats">
+        <div><span class="k">Frame</span><span class="v" id="vStatFrame">—</span></div>
+        <div><span class="k">Speed</span><span class="v" id="vStatFps">—</span></div>
+        <div><span class="k">Elapsed</span><span class="v" id="vStatElapsed">—</span></div>
+        <div><span class="k">Remaining</span><span class="v" id="vStatRemaining">—</span></div>
+      </div>
+      <button class="ghost danger-ghost" id="videoCancelBtn" style="margin-top:10px; width:100%;">Cancel processing</button>
+    </div>
+
+    <!-- RESULT -->
+    <section class="panel" id="videoResultPanel" style="display:none;">
+      <p class="panel-title">Result</p>
+      <video id="videoResultEl" style="width:100%; border-radius:var(--radius-sm);" controls playsinline></video>
+
+      <p class="panel-title" style="margin-top:18px;">Before / after frame compare</p>
+      <div class="compare-viewport" id="videoCompareViewport">
+        <div class="compare" id="videoCompare">
+          <span class="tag before">Before</span>
+          <span class="tag after">After</span>
+          <img id="videoBeforeImg" src="" alt="original frame">
+          <div class="after-wrap" id="videoAfterWrap"><img id="videoAfterImg" src="" alt="processed frame"></div>
+          <div class="handle" id="videoHandle"></div>
+        </div>
+      </div>
+
+      <div class="info-grid" style="margin-top:16px;">
+        <div class="info-item"><div class="k">Output resolution</div><div class="v signal" id="vInfoRes">—</div></div>
+        <div class="info-item"><div class="k">Processing mode</div><div class="v" id="vInfoMode">—</div></div>
+        <div class="info-item"><div class="k">Output FPS</div><div class="v" id="vInfoFps">—</div></div>
+        <div class="info-item"><div class="k">Output file size</div><div class="v" id="vInfoSize">—</div></div>
+        <div class="info-item"><div class="k">Format</div><div class="v" id="vInfoFormat">—</div></div>
+        <div class="info-item"><div class="k">Audio</div><div class="v" id="vInfoAudio">—</div></div>
+      </div>
+
+      <div class="actions-row" style="margin-top:16px;">
+        <button class="primary" id="videoDownloadBtn">Download video</button>
+        <button class="ghost" id="videoResetBtn">Start over</button>
+      </div>
+    </section>
+
+  </div><!-- /videoTab -->
+
 </div>
 
 <div class="toast" id="toast"></div>
@@ -248,5 +426,6 @@
 <script src="js/engine.js"></script>
 <script src="js/presets.js"></script>
 <script src="script.js"></script>
+<script src="js/video-controller.js"></script>
 </body>
 </html>

@@ -100,6 +100,40 @@ If a phone genuinely can't handle an 8K export, the honest outcome is that it's 
 
 Photo / Social Media / News GFX / Portrait / Max Quality are just starting bundles of the same parameters you can see and adjust yourself (defined plainly in `js/presets.js` — nothing hidden). Changing any individual control after picking a preset automatically switches the mode to **Custom** so your adjustment isn't silently overwritten.
 
-## 7. Privacy
+## 7. Video (new)
 
-No image ever leaves the browser. No analytics, no tracking, no login, no database, no external API calls of any kind.
+The Video tab adds real, non-AI, in-browser video upscaling/enhancement — same "no AI, no upload" philosophy as the image side, extended to a second medium with its own real technical constraints, stated plainly rather than glossed over:
+
+- **Output is WebM, not MP4, on almost every device.** Producing a playable video file needs a container muxer; the only one available without bundling a library is the browser's own `MediaRecorder`, which reliably supports WebM (VP8/VP9 + Opus) and only inconsistently supports MP4 (feature-detected — used automatically if your browser happens to support it, otherwise WebM).
+- **Processing takes roughly as long as the video's own duration.** There's no container demuxer here to decode frames faster than real-time playback — building one reliably from scratch is a genuinely large undertaking, not something to fake. A 5-minute source video takes around 5+ minutes to process. The one advantage this buys you: the browser's native media pipeline decodes progressively rather than loading the whole file into memory, which is exactly why a 1GB source file is safe to process at all.
+- **Two capture backends, feature-detected:**
+  - **Chrome / Android Chrome:** `MediaStreamTrackProcessor` reads decoded frames one at a time; each is resized on the main thread (one cheap canvas draw, or through the same WebGL2 Lanczos3 shader the image pipeline uses), handed to `workers/video-worker.js` for the actual enhancement math, and written into a `MediaStreamTrackGenerator` to form a new processed video track — keeping the per-pixel work off the main thread.
+  - **Other browsers:** `requestVideoFrameCallback` drives the same resize → worker-enhance → draw sequence onto a plain `<canvas>`, which feeds `canvas.captureStream()` instead. Functionally equivalent; the UI still doesn't block because the worker round-trip per frame is awaited asynchronously between callbacks, not run inline.
+- **`js/shared-filters.js`** holds the actual enhancement math (denoise, detail, local contrast, adaptive sharpen) used by *both* `js/worker.js` (image tiles) and `workers/video-worker.js` (video frames) via `importScripts()` — one implementation, not two copies that could drift apart.
+- **Text/logo and portrait protection are image-only**, on purpose: those heuristics are inherently a little noisy frame-to-frame, and applying them per-frame without temporal smoothing is exactly the kind of thing that would flicker — the one thing explicitly asked to avoid. Rather than ship a flickery version of a feature, video enhancement sticks to the temporally-stable stages (denoise, detail, sharpen), which are already deterministic per-frame and don't have this problem in practice.
+- **Video resampling is single-pass** (Lanczos3 via the WebGL2 shader, or bicubic via canvas), not the multi-pass stepped treatment used for large image upscales — a real-time per-frame budget doesn't leave room for multiple resize passes per frame.
+
+## 8. Full file list for GitHub Pages
+
+```
+upres/
+├── index.html
+├── style.css
+├── script.js                  — image pipeline controller
+├── js/
+│   ├── engine.js                — capability detection, memory safety, WebGL2 Lanczos3
+│   ├── presets.js                — image processing-mode presets
+│   ├── shared-filters.js          — the actual enhancement math (used by both workers)
+│   ├── worker.js                   — image tiled pipeline (imports shared-filters.js)
+│   └── video-controller.js          — video tab controller
+├── workers/
+│   └── video-worker.js               — video per-frame pipeline (imports ../js/shared-filters.js)
+├── assets/
+└── README.md
+```
+
+Upload all of these preserving the folder structure exactly — `js/` and `workers/` must stay as separate top-level folders since `video-worker.js` references `../js/shared-filters.js` by relative path.
+
+## 9. Privacy
+
+No image or video ever leaves the browser. No analytics, no tracking, no login, no database, no external API calls of any kind.
