@@ -254,3 +254,227 @@ function applySharpen(buf, sharpAmount, edgeMask, skinMask, portraitProtect) {
   }
   return { width: w, height: h, data: out };
 }
+
+/* ============================================================
+   Color & tone stages — beyond sharpness. Auto white balance,
+   auto levels, vibrance, shadow/highlight recovery, and CLAHE
+   (Contrast-Limited Adaptive Histogram Equalization). Every one
+   of these is a real, published, decades-old technique used in
+   professional photo tools — none of it is AI, and none of it
+   invents color or detail that isn't derivable from the source
+   pixels.
+   ============================================================ */
+
+function computeChannelMeans(buf) {
+  const { width: w, height: h, data } = buf;
+  const n = w * h;
+  let sr = 0, sg = 0, sb = 0;
+  for (let p = 0, i = 0; p < n; p++, i += 4) { sr += data[i]; sg += data[i + 1]; sb += data[i + 2]; }
+  return { r: sr / n, g: sg / n, b: sb / n };
+}
+
+/** Gray-World auto white balance (von Kries / diagonal model): assumes
+ *  the average color of a sufficiently varied scene is neutral gray,
+ *  and scales each channel so its mean moves toward that gray target.
+ *  `strength` (0..1) blends between the original and the fully
+ *  corrected result, and per-channel gain is clamped to a moderate
+ *  range so a scene that's genuinely dominated by one color (e.g. a
+ *  sunset, a green field) doesn't get over-corrected toward gray. */
+function applyAutoWhiteBalance(buf, strength) {
+  const { width: w, height: h, data } = buf;
+  const { r: mr, g: mg, b: mb } = computeChannelMeans(buf);
+  if (mr < 1 || mg < 1 || mb < 1) return buf; // degenerate (near-black) buffer — skip
+  const gray = (mr + mg + mb) / 3;
+  const clampGain = (v) => Math.max(0.7, Math.min(1.5, v));
+  const kr = 1 + (clampGain(gray / mr) - 1) * strength;
+  const kg = 1 + (clampGain(gray / mg) - 1) * strength;
+  const kb = 1 + (clampGain(gray / mb) - 1) * strength;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    out[i] = clamp255(data[i] * kr);
+    out[i + 1] = clamp255(data[i + 1] * kg);
+    out[i + 2] = clamp255(data[i + 2] * kb);
+    out[i + 3] = data[i + 3];
+  }
+  return { width: w, height: h, data: out };
+}
+
+/** Auto levels: per-channel percentile-clipped histogram stretch —
+ *  finds the black/white point at `clipPercent`/`100-clipPercent` of
+ *  each channel's histogram (so a few outlier pixels don't anchor the
+ *  whole stretch) and remaps that range to the full 0-255 span. */
+function applyAutoLevels(buf, clipPercent) {
+  const { width: w, height: h, data } = buf;
+  const n = w * h;
+  const histR = new Uint32Array(256), histG = new Uint32Array(256), histB = new Uint32Array(256);
+  for (let p = 0, i = 0; p < n; p++, i += 4) { histR[data[i]]++; histG[data[i + 1]]++; histB[data[i + 2]]++; }
+
+  function findBounds(hist) {
+    const clipCount = Math.max(1, Math.round(n * clipPercent / 100));
+    let lo = 0, acc = 0;
+    while (lo < 255) { acc += hist[lo]; if (acc >= clipCount) break; lo++; }
+    let hi = 255; acc = 0;
+    while (hi > 0) { acc += hist[hi]; if (acc >= clipCount) break; hi--; }
+    if (hi <= lo) { lo = 0; hi = 255; }
+    return { lo, hi };
+  }
+  const br = findBounds(histR), bg = findBounds(histG), bb = findBounds(histB);
+  const scaleR = 255 / Math.max(1, br.hi - br.lo);
+  const scaleG = 255 / Math.max(1, bg.hi - bg.lo);
+  const scaleB = 255 / Math.max(1, bb.hi - bb.lo);
+
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    out[i] = clamp255((data[i] - br.lo) * scaleR);
+    out[i + 1] = clamp255((data[i + 1] - bg.lo) * scaleG);
+    out[i + 2] = clamp255((data[i + 2] - bb.lo) * scaleB);
+    out[i + 3] = data[i + 3];
+  }
+  return { width: w, height: h, data: out };
+}
+
+/** Vibrance: boosts muted colors more than already-saturated ones
+ *  (unlike a flat saturation multiply, which oversaturates skies and
+ *  clips already-vivid colors equally), and specifically damps the
+ *  boost in skin-tone hues (~5-45°) so portraits don't turn plastic-
+ *  orange the way an aggressive flat saturation boost does. */
+function applyVibrance(buf, amount) {
+  if (amount <= 0) return buf;
+  const { width: w, height: h, data } = buf;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const chroma = (max - min) / 255;
+
+    let hue = 0;
+    if (max !== min) {
+      const d = max - min;
+      if (max === r) hue = 60 * (((g - b) / d) % 6);
+      else if (max === g) hue = 60 * ((b - r) / d + 2);
+      else hue = 60 * ((r - g) / d + 4);
+      if (hue < 0) hue += 360;
+    }
+    const skinDamp = (hue >= 5 && hue <= 45) ? 0.45 : 1;
+    const boost = 1 + amount * (1 - chroma) * skinDamp * 1.8;
+    const gray = (r + g + b) / 3;
+
+    out[i] = clamp255(gray + (r - gray) * boost);
+    out[i + 1] = clamp255(gray + (g - gray) * boost);
+    out[i + 2] = clamp255(gray + (b - gray) * boost);
+    out[i + 3] = data[i + 3];
+  }
+  return { width: w, height: h, data: out };
+}
+
+/** Shadow/highlight recovery: a luminance-masked tone lift/pull —
+ *  shadows get lifted in proportion to how dark they already are
+ *  (a quadratic falloff so midtones are barely touched), highlights
+ *  get pulled down the same way from the bright end. The same delta
+ *  is applied to all three channels so hue/saturation ratios are
+ *  preserved rather than just brightening/darkening toward gray. */
+function applyShadowHighlightRecovery(buf, shadowAmt, highlightAmt) {
+  if (shadowAmt <= 0 && highlightAmt <= 0) return buf;
+  const { width: w, height: h, data } = buf;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const l = luma(data, i) / 255;
+    const shadowMask = Math.pow(1 - l, 2.2);
+    const highlightMask = Math.pow(l, 2.2);
+    const delta = shadowAmt * shadowMask * 70 - highlightAmt * highlightMask * 70;
+    out[i] = clamp255(data[i] + delta);
+    out[i + 1] = clamp255(data[i + 1] + delta);
+    out[i + 2] = clamp255(data[i + 2] + delta);
+    out[i + 3] = data[i + 3];
+  }
+  return { width: w, height: h, data: out };
+}
+
+/** CLAHE — Contrast-Limited Adaptive Histogram Equalization
+ *  (Zuiderveld, Graphics Gems IV, 1994). Divides the buffer into a
+ *  gridSize×gridSize grid of tiles, builds a per-tile luminance
+ *  histogram, clips any bin above `clipLimit` (redistributing the
+ *  clipped-off excess uniformly across all bins first — this is
+ *  what keeps CLAHE from amplifying noise in flat regions the way
+ *  plain histogram equalization does), turns each tile's histogram
+ *  into a CDF-based lookup table, then bilinearly interpolates
+ *  between the 4 nearest tile LUTs per pixel so tile boundaries
+ *  don't show as seams. The result is applied as a luminance ratio
+ *  to the original RGB (rather than replacing luminance outright),
+ *  which keeps hue and saturation intact. */
+function applyCLAHE(buf, clipLimit, gridSize) {
+  const { width: w, height: h, data } = buf;
+  const n = w * h;
+  const lumaArr = new Float32Array(n);
+  for (let p = 0, i = 0; p < n; p++, i += 4) lumaArr[p] = luma(data, i);
+
+  const tilesX = gridSize, tilesY = gridSize;
+  const tileW = Math.max(1, Math.ceil(w / tilesX));
+  const tileH = Math.max(1, Math.ceil(h / tilesY));
+
+  const luts = [];
+  for (let ty = 0; ty < tilesY; ty++) {
+    for (let tx = 0; tx < tilesX; tx++) {
+      const x0 = tx * tileW, y0 = ty * tileH;
+      const x1 = Math.min(w, x0 + tileW), y1 = Math.min(h, y0 + tileH);
+      const hist = new Float64Array(256);
+      let count = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          hist[Math.max(0, Math.min(255, Math.round(lumaArr[y * w + x])))]++;
+          count++;
+        }
+      }
+      const clipCount = Math.max(1, Math.round(clipLimit * count / 256));
+      let excess = 0;
+      for (let b = 0; b < 256; b++) {
+        if (hist[b] > clipCount) { excess += hist[b] - clipCount; hist[b] = clipCount; }
+      }
+      const redistribute = excess / 256;
+      for (let b = 0; b < 256; b++) hist[b] += redistribute;
+
+      const lut = new Float32Array(256);
+      let cdf = 0;
+      for (let b = 0; b < 256; b++) { cdf += hist[b]; lut[b] = cdf; }
+      const total = cdf || 1;
+      for (let b = 0; b < 256; b++) lut[b] = (lut[b] / total) * 255;
+      luts.push(lut);
+    }
+  }
+
+  const out = new Uint8ClampedArray(data.length);
+  for (let y = 0; y < h; y++) {
+    const fy = (y - tileH / 2) / tileH;
+    const ty0 = Math.floor(fy);
+    const wy = fy - ty0;
+    const ty0c = Math.max(0, Math.min(tilesY - 1, ty0));
+    const ty1c = Math.max(0, Math.min(tilesY - 1, ty0 + 1));
+
+    for (let x = 0; x < w; x++) {
+      const fx = (x - tileW / 2) / tileW;
+      const tx0 = Math.floor(fx);
+      const wx = fx - tx0;
+      const tx0c = Math.max(0, Math.min(tilesX - 1, tx0));
+      const tx1c = Math.max(0, Math.min(tilesX - 1, tx0 + 1));
+
+      const p = y * w + x;
+      const v = Math.max(0, Math.min(255, Math.round(lumaArr[p])));
+
+      const l00 = luts[ty0c * tilesX + tx0c][v];
+      const l01 = luts[ty0c * tilesX + tx1c][v];
+      const l10 = luts[ty1c * tilesX + tx0c][v];
+      const l11 = luts[ty1c * tilesX + tx1c][v];
+      const top = l00 * (1 - wx) + l01 * wx;
+      const bot = l10 * (1 - wx) + l11 * wx;
+      const newLuma = top * (1 - wy) + bot * wy;
+
+      const ratio = lumaArr[p] > 1 ? newLuma / lumaArr[p] : 1;
+      const i = p * 4;
+      out[i] = clamp255(data[i] * ratio);
+      out[i + 1] = clamp255(data[i + 1] * ratio);
+      out[i + 2] = clamp255(data[i + 2] * ratio);
+      out[i + 3] = data[i + 3];
+    }
+  }
+  return { width: w, height: h, data: out };
+}

@@ -60,10 +60,10 @@
   };
 
   const VIDEO_MODE_DEFAULTS = {
-    social: { sharpen: 'high', denoise: 'low', resample: 'lanczos', bitrate: 'auto', detail: 0.30, localContrast: false },
-    max: { sharpen: 'high', denoise: 'medium', resample: 'lanczos', bitrate: 'high', detail: 0.50, localContrast: true },
-    balanced: { sharpen: 'medium', denoise: 'off', resample: 'lanczos', bitrate: 'auto', detail: 0.30, localContrast: false },
-    clean: { sharpen: 'low', denoise: 'medium', resample: 'bicubic', bitrate: 'auto', detail: 0.15, localContrast: false }
+    social: { sharpen: 'high', denoise: 'low', resample: 'lanczos', bitrate: 'auto', detail: 0.30, localContrast: false, vibrance: 0.35, shadowRecovery: 0.20, highlightRecovery: 0.15 },
+    max: { sharpen: 'high', denoise: 'medium', resample: 'lanczos', bitrate: 'high', detail: 0.50, localContrast: true, vibrance: 0.25, shadowRecovery: 0.25, highlightRecovery: 0.20 },
+    balanced: { sharpen: 'medium', denoise: 'off', resample: 'lanczos', bitrate: 'auto', detail: 0.30, localContrast: false, vibrance: 0.15, shadowRecovery: 0.15, highlightRecovery: 0.15 },
+    clean: { sharpen: 'low', denoise: 'medium', resample: 'bicubic', bitrate: 'auto', detail: 0.15, localContrast: false, vibrance: 0.10, shadowRecovery: 0.15, highlightRecovery: 0.10 }
   };
   const SHARPEN_AMOUNTS = { off: 0, low: 0.25, medium: 0.45, high: 0.65 };
   const RES_HEIGHTS = { 720: 720, 1080: 1080, 1440: 1440, 2160: 2160 };
@@ -402,7 +402,10 @@
       denoiseArtifact: vstate.denoise, // one Denoise control covers both, per the spec's single "Denoise" setting
       detailAmount: defaults.detail,
       sharpAmount: SHARPEN_AMOUNTS[vstate.sharpen] || 0,
-      localContrast: defaults.localContrast
+      localContrast: defaults.localContrast,
+      vibrance: defaults.vibrance,
+      shadowRecovery: defaults.shadowRecovery,
+      highlightRecovery: defaults.highlightRecovery
     };
   }
 

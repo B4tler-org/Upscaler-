@@ -16,7 +16,13 @@ const PRESETS = {
     jpegArtifact: 'off',
     textProtection: false,
     portraitProtection: false,
-    localContrast: false
+    localContrast: false,
+    autoWhiteBalance: false,
+    autoLevels: false,
+    adaptiveContrast: 0,
+    shadowRecovery: 0.15,
+    highlightRecovery: 0.15,
+    vibrance: 0.20
   },
   social: {
     label: 'Social Media',
@@ -27,7 +33,13 @@ const PRESETS = {
     jpegArtifact: 'low',
     textProtection: true,
     portraitProtection: false,
-    localContrast: true
+    localContrast: true,
+    autoWhiteBalance: true,
+    autoLevels: false,
+    adaptiveContrast: 0.35,
+    shadowRecovery: 0.25,
+    highlightRecovery: 0.15,
+    vibrance: 0.45
   },
   news: {
     label: 'News GFX',
@@ -38,7 +50,13 @@ const PRESETS = {
     jpegArtifact: 'medium',
     textProtection: true,
     portraitProtection: false,
-    localContrast: false
+    localContrast: false,
+    autoWhiteBalance: true,
+    autoLevels: true,
+    adaptiveContrast: 0.25,
+    shadowRecovery: 0.20,
+    highlightRecovery: 0.20,
+    vibrance: 0.25
   },
   portrait: {
     label: 'Portrait',
@@ -49,7 +67,13 @@ const PRESETS = {
     jpegArtifact: 'off',
     textProtection: false,
     portraitProtection: true,
-    localContrast: false
+    localContrast: false,
+    autoWhiteBalance: true,
+    autoLevels: false,
+    adaptiveContrast: 0,
+    shadowRecovery: 0.30,
+    highlightRecovery: 0.20,
+    vibrance: 0.15
   },
   max: {
     label: 'Max Quality',
@@ -60,7 +84,13 @@ const PRESETS = {
     jpegArtifact: 'medium',
     textProtection: true,
     portraitProtection: true,
-    localContrast: true
+    localContrast: true,
+    autoWhiteBalance: true,
+    autoLevels: true,
+    adaptiveContrast: 0.45,
+    shadowRecovery: 0.30,
+    highlightRecovery: 0.25,
+    vibrance: 0.35
   }
   // 'custom' is intentionally absent — selecting it just stops the
   // preset chip row from overwriting whatever values are already set.

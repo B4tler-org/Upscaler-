@@ -112,8 +112,30 @@ function normalizeConfig(enhance) {
     sharpAmount: enhance.sharpAmount || 0,
     localContrast: !!enhance.localContrast,
     textProtection: !!enhance.textProtection,
-    portraitProtection: !!enhance.portraitProtection
+    portraitProtection: !!enhance.portraitProtection,
+    autoWhiteBalance: !!enhance.autoWhiteBalance,
+    autoLevels: !!enhance.autoLevels,
+    adaptiveContrast: enhance.adaptiveContrast || 0,
+    shadowRecovery: enhance.shadowRecovery || 0,
+    highlightRecovery: enhance.highlightRecovery || 0,
+    vibrance: enhance.vibrance || 0
   };
+}
+
+/** Color & tone stages, in the order a photo editor would apply
+ *  them: correct color cast first, then stretch tone, then adaptive
+ *  local contrast, then shadow/highlight fine-tuning. Detail,
+ *  clarity, vibrance, and sharpening (which all come after this in
+ *  the callers below) are deliberately kept separate since vibrance
+ *  in particular wants to act on already color/tone-corrected pixels. */
+function applyColorAndToneStages(cur, cfg) {
+  if (cfg.autoWhiteBalance) cur = applyAutoWhiteBalance(cur, 0.8);
+  if (cfg.autoLevels) cur = applyAutoLevels(cur, 0.4);
+  if (cfg.adaptiveContrast > 0) cur = applyCLAHE(cur, 1 + cfg.adaptiveContrast * 6, 8);
+  if (cfg.shadowRecovery > 0 || cfg.highlightRecovery > 0) {
+    cur = applyShadowHighlightRecovery(cur, cfg.shadowRecovery, cfg.highlightRecovery);
+  }
+  return cur;
 }
 
 // ============================================================
@@ -232,8 +254,10 @@ function processTileFinish(buf, cfg) {
   const skinMask = cfg.portraitProtection ? computeSkinMask(buf, mag) : null;
 
   let cur = buf;
+  cur = applyColorAndToneStages(cur, cfg);
   if (cfg.detailAmount > 0) cur = applyDetail(cur, cfg.detailAmount);
   if (cfg.localContrast) cur = applyLocalContrast(cur);
+  if (cfg.vibrance > 0) cur = applyVibrance(cur, cfg.vibrance);
   if (cfg.sharpAmount > 0) {
     const edgeMask = normalizeMask(mag, buf.width, buf.height, 60);
     cur = applySharpen(cur, cfg.sharpAmount, edgeMask, skinMask, cfg.portraitProtection);
@@ -258,8 +282,10 @@ function processTileFull(buf, cfg) {
     const p = JPEG_PRESETS[cfg.jpegArtifact];
     cur = bilateralLite(cur, p.radius, p.threshold, textMask, protectStrength);
   }
+  cur = applyColorAndToneStages(cur, cfg);
   if (cfg.detailAmount > 0) cur = applyDetail(cur, cfg.detailAmount);
   if (cfg.localContrast) cur = applyLocalContrast(cur);
+  if (cfg.vibrance > 0) cur = applyVibrance(cur, cfg.vibrance);
   if (cfg.sharpAmount > 0) {
     const edgeMask = normalizeMask(mag, buf.width, buf.height, 60);
     cur = applySharpen(cur, cfg.sharpAmount, edgeMask, skinMask, cfg.portraitProtection);
