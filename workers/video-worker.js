@@ -58,7 +58,10 @@ function normalizeVideoConfig(enhance) {
     denoiseArtifact: enhance.denoiseArtifact || 'off', // JPEG/compression-artifact-style cleanup
     detailAmount: enhance.detailAmount || 0,
     sharpAmount: enhance.sharpAmount || 0,
-    localContrast: !!enhance.localContrast
+    localContrast: !!enhance.localContrast,
+    vibrance: enhance.vibrance || 0,
+    shadowRecovery: enhance.shadowRecovery || 0,
+    highlightRecovery: enhance.highlightRecovery || 0
   };
 }
 
@@ -75,13 +78,24 @@ const VIDEO_ARTIFACT_PRESETS = {
 };
 
 /** One combined pass: denoise -> artifact cleanup -> detail ->
- *  local contrast -> adaptive sharpen. Text/portrait protection
- *  masks aren't offered for video (see README) — a per-frame
- *  Sobel+skin heuristic that isn't temporally smoothed is exactly
- *  the kind of thing that would flicker frame to frame, which is
- *  the one thing the brief explicitly asked to avoid; leaving
- *  those two heuristics image-only is a deliberate choice, not an
- *  oversight. */
+ *  local contrast -> shadow/highlight -> vibrance -> adaptive
+ *  sharpen.
+ *
+ *  Deliberately NOT offered for video, and why: text/portrait
+ *  protection (per-frame Sobel/skin heuristics), auto white
+ *  balance, auto levels, and CLAHE all either use an un-smoothed
+ *  per-frame heuristic mask or — worse — compute their correction
+ *  from that individual frame's own global/regional pixel
+ *  statistics (channel means, histograms, tile histograms). Scene
+ *  content shifts slightly frame to frame even in a static shot
+ *  (noise, micro camera-shake, compression), which would make
+ *  those statistics drift and show up as visible brightness/color/
+ *  contrast "breathing" — exactly the flicker the brief explicitly
+ *  asked to avoid. Vibrance and shadow/highlight recovery are safe
+ *  to include here because both are fixed, deterministic per-pixel
+ *  functions with no dependency on frame-wide statistics: the same
+ *  input pixel always produces the same output pixel, frame after
+ *  frame, so there's nothing for them to drift. */
 function processVideoFrame(buf, cfg) {
   let cur = buf;
 
@@ -95,8 +109,12 @@ function processVideoFrame(buf, cfg) {
     const zeroMask = new Float32Array(cur.width * cur.height);
     cur = bilateralLite(cur, p.radius, p.threshold, zeroMask, 0);
   }
+  if (cfg.shadowRecovery > 0 || cfg.highlightRecovery > 0) {
+    cur = applyShadowHighlightRecovery(cur, cfg.shadowRecovery, cfg.highlightRecovery);
+  }
   if (cfg.detailAmount > 0) cur = applyDetail(cur, cfg.detailAmount);
   if (cfg.localContrast) cur = applyLocalContrast(cur);
+  if (cfg.vibrance > 0) cur = applyVibrance(cur, cfg.vibrance);
   if (cfg.sharpAmount > 0) {
     const { mag } = computeGrayAndSobel(cur);
     const edgeMask = normalizeMask(mag, cur.width, cur.height, 60);
