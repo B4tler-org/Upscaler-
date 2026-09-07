@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>UPRES — Non-AI Image Upscaler &amp; Graphics Enhancer</title>
 <meta name="description" content="Client-side image upscaler to 4K/8K using traditional Lanczos resampling, edge-aware denoising, and adaptive sharpening — no AI, no upload, no server.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -18,7 +21,7 @@
       <div class="brand-mark">U</div>
       <div class="brand-name"><b>UPRES</b> · non-AI</div>
     </div>
-    <h1>Upscale images to real <span>4K / 8K</span> with traditional processing.</h1>
+    <h1>Upscale images to real 4K / 8K with traditional processing.</h1>
     <p class="lede">Lanczos3 resampling, edge-aware noise reduction, adaptive sharpening, and a dedicated graphics/poster enhancer — pure math, no neural network, no upload, no server.</p>
     <div class="capsule-row" id="capabilityRow">
       <span class="capsule" id="capWebGL"><span class="dot"></span>WebGL2</span>
@@ -44,7 +47,7 @@
 
   <!-- UPLOAD -->
   <section class="panel" id="uploadPanel">
-    <p class="panel-title">01 · Source Image</p>
+    <p class="panel-title"><span class="num">01</span> · Source Image</p>
     <div id="dropzone">
       <input type="file" id="fileInput" accept="image/*">
       <div class="icon">Tap or drop</div>
@@ -71,7 +74,7 @@
 
   <!-- PROCESSING MODE / PRESET -->
   <section class="panel" id="presetPanel">
-    <p class="panel-title">02 · Processing Mode</p>
+    <p class="panel-title"><span class="num">02</span> · Processing Mode</p>
     <div class="chip-grid" id="presetChips">
       <button class="chip active" data-preset="photo">Photo</button>
       <button class="chip" data-preset="social">Social Media</button>
@@ -84,7 +87,7 @@
 
   <!-- TARGET (upscale mode) -->
   <section class="panel" id="targetPanel" style="display:none;">
-    <p class="panel-title">03 · Output Resolution</p>
+    <p class="panel-title"><span class="num">03</span> · Output Resolution</p>
     <div class="chip-grid" id="upscalePresets">
       <button class="chip" data-preset="2x">2×</button>
       <button class="chip" data-preset="3x">3×</button>
@@ -102,7 +105,7 @@
 
   <!-- EXPORT PRESETS (graphics mode) -->
   <section class="panel" id="graphicsPanel" style="display:none;">
-    <p class="panel-title">03 · Export Preset</p>
+    <p class="panel-title"><span class="num">03</span> · Export Preset</p>
     <div class="chip-grid" id="graphicsPresets">
       <button class="chip active" data-gpreset="original">Original size (enhance only)</button>
       <button class="chip" data-gpreset="ig-portrait">Instagram Portrait 1080×1350</button>
@@ -120,7 +123,7 @@
 
   <!-- RESAMPLING QUALITY -->
   <section class="panel" id="qualityPanel">
-    <p class="panel-title">04 · Resampling Quality</p>
+    <p class="panel-title"><span class="num">04</span> · Resampling Quality</p>
     <div class="chip-grid" id="qualityChips">
       <button class="chip" data-quality="fast">Fast <span class="chip-sub">single-pass</span></button>
       <button class="chip active" data-quality="balanced">Balanced <span class="chip-sub">multi-pass</span></button>
@@ -130,7 +133,7 @@
 
   <!-- ENHANCEMENTS -->
   <section class="panel" id="enhancePanel">
-    <p class="panel-title">05 · Enhancement Controls</p>
+    <p class="panel-title"><span class="num">05</span> · Enhancement Controls</p>
 
     <div class="slider-row">
       <div class="slider-label"><span>Detail enhancement</span><span class="val" id="detailVal">30%</span></div>
@@ -175,6 +178,37 @@
         <label class="switch"><input type="checkbox" id="localContrast"><span class="track"></span></label>
       </div>
     </details>
+  </section>
+
+  <!-- COLOR & TONE -->
+  <section class="panel" id="colorTonePanel">
+    <p class="panel-title"><span class="num">06</span> · Color &amp; Tone</p>
+
+    <div class="toggle-row">
+      <div><div class="label">Auto white balance</div><div class="sub">Gray-World correction — neutralizes a color cast from the light source</div></div>
+      <label class="switch"><input type="checkbox" id="autoWhiteBalance"><span class="track"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div><div class="label">Auto levels</div><div class="sub">Percentile-clipped histogram stretch per channel — fixes flat, washed-out contrast</div></div>
+      <label class="switch"><input type="checkbox" id="autoLevels"><span class="track"></span></label>
+    </div>
+
+    <div class="slider-row" style="margin-top:16px;">
+      <div class="slider-label"><span>Adaptive contrast <span class="tag-pro">CLAHE</span></span><span class="val" id="adaptiveContrastVal">0%</span></div>
+      <input type="range" id="adaptiveContrastSlider" min="0" max="100" value="0">
+    </div>
+    <div class="slider-row">
+      <div class="slider-label"><span>Shadow recovery</span><span class="val" id="shadowVal">15%</span></div>
+      <input type="range" id="shadowSlider" min="0" max="100" value="15">
+    </div>
+    <div class="slider-row">
+      <div class="slider-label"><span>Highlight recovery</span><span class="val" id="highlightVal">15%</span></div>
+      <input type="range" id="highlightSlider" min="0" max="100" value="15">
+    </div>
+    <div class="slider-row">
+      <div class="slider-label"><span>Vibrance</span><span class="val" id="vibranceVal">20%</span></div>
+      <input type="range" id="vibranceSlider" min="0" max="100" value="20">
+    </div>
   </section>
 
   <!-- MEMORY WARNING -->
@@ -265,7 +299,7 @@
 
     <!-- SOURCE VIDEO -->
     <section class="panel" id="videoUploadPanel">
-      <p class="panel-title">01 · Source Video</p>
+      <p class="panel-title"><span class="num">01</span> · Source Video</p>
       <div id="videoDropzone">
         <input type="file" id="videoFileInput" accept="video/*">
         <div class="icon">Tap or drop</div>
@@ -285,7 +319,7 @@
 
     <!-- OUTPUT RESOLUTION -->
     <section class="panel" id="videoOutputPanel" style="display:none;">
-      <p class="panel-title">02 · Output Resolution</p>
+      <p class="panel-title"><span class="num">02</span> · Output Resolution</p>
       <div class="chip-grid" id="videoResChips">
         <button class="chip active" data-vres="original">Original</button>
         <button class="chip" data-vres="720">720p</button>
@@ -298,7 +332,7 @@
 
     <!-- PROCESSING MODE -->
     <section class="panel" id="videoModePanel" style="display:none;">
-      <p class="panel-title">03 · Processing Mode</p>
+      <p class="panel-title"><span class="num">03</span> · Processing Mode</p>
       <div class="chip-grid" id="videoModeChips">
         <button class="chip" data-vmode="social">Social Media</button>
         <button class="chip" data-vmode="max">Max Quality</button>

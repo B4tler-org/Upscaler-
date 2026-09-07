@@ -28,6 +28,12 @@
     textProtection: false,
     portraitProtection: false,
     localContrast: false,
+    autoWhiteBalance: false,
+    autoLevels: false,
+    adaptiveContrast: 0,
+    shadowRecovery: 0.15,
+    highlightRecovery: 0.15,
+    vibrance: 0.20,
 
     resultFormat: 'png',
     jpegQuality: 0.92,
@@ -306,6 +312,19 @@
     el('localContrast').checked = p.localContrast;
     state.localContrast = p.localContrast;
 
+    el('autoWhiteBalance').checked = p.autoWhiteBalance;
+    state.autoWhiteBalance = p.autoWhiteBalance;
+    el('autoLevels').checked = p.autoLevels;
+    state.autoLevels = p.autoLevels;
+    setSliderValue('adaptiveContrastSlider', 'adaptiveContrastVal', Math.round(p.adaptiveContrast * 100));
+    state.adaptiveContrast = p.adaptiveContrast;
+    setSliderValue('shadowSlider', 'shadowVal', Math.round(p.shadowRecovery * 100));
+    state.shadowRecovery = p.shadowRecovery;
+    setSliderValue('highlightSlider', 'highlightVal', Math.round(p.highlightRecovery * 100));
+    state.highlightRecovery = p.highlightRecovery;
+    setSliderValue('vibranceSlider', 'vibranceVal', Math.round(p.vibrance * 100));
+    state.vibrance = p.vibrance;
+
     state.applyingPreset = false;
   }
 
@@ -388,6 +407,33 @@
     el('textProtection').addEventListener('change', (e) => { state.textProtection = e.target.checked; markCustomIfManual(); });
     el('portraitProtection').addEventListener('change', (e) => { state.portraitProtection = e.target.checked; markCustomIfManual(); });
     el('localContrast').addEventListener('change', (e) => { state.localContrast = e.target.checked; markCustomIfManual(); });
+
+    el('autoWhiteBalance').addEventListener('change', (e) => { state.autoWhiteBalance = e.target.checked; markCustomIfManual(); });
+    el('autoLevels').addEventListener('change', (e) => { state.autoLevels = e.target.checked; markCustomIfManual(); });
+    el('adaptiveContrastSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('adaptiveContrastVal').textContent = pct + '%';
+      state.adaptiveContrast = pct / 100;
+      markCustomIfManual();
+    });
+    el('shadowSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('shadowVal').textContent = pct + '%';
+      state.shadowRecovery = pct / 100;
+      markCustomIfManual();
+    });
+    el('highlightSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('highlightVal').textContent = pct + '%';
+      state.highlightRecovery = pct / 100;
+      markCustomIfManual();
+    });
+    el('vibranceSlider').addEventListener('input', (e) => {
+      const pct = parseInt(e.target.value, 10);
+      el('vibranceVal').textContent = pct + '%';
+      state.vibrance = pct / 100;
+      markCustomIfManual();
+    });
   }
 
   function wireSeg(containerId, onChange) {
@@ -409,7 +455,13 @@
       sharpAmount: state.sharpAmount,
       localContrast: state.localContrast,
       textProtection: state.textProtection,
-      portraitProtection: state.portraitProtection
+      portraitProtection: state.portraitProtection,
+      autoWhiteBalance: state.autoWhiteBalance,
+      autoLevels: state.autoLevels,
+      adaptiveContrast: state.adaptiveContrast,
+      shadowRecovery: state.shadowRecovery,
+      highlightRecovery: state.highlightRecovery,
+      vibrance: state.vibrance
     };
   }
 
@@ -417,8 +469,14 @@
     const s = [];
     if (cfg.noiseReduction !== 'off') s.push('Noise reduction (' + cfg.noiseReduction + ')');
     if (cfg.jpegArtifact !== 'off') s.push('JPEG artifact removal (' + cfg.jpegArtifact + ')');
+    if (cfg.autoWhiteBalance) s.push('Auto white balance');
+    if (cfg.autoLevels) s.push('Auto levels');
+    if (cfg.adaptiveContrast > 0) s.push('Adaptive contrast (CLAHE)');
+    if (cfg.shadowRecovery > 0) s.push('Shadow recovery');
+    if (cfg.highlightRecovery > 0) s.push('Highlight recovery');
     if (cfg.detailAmount > 0) s.push('Detail enhancement');
     if (cfg.localContrast) s.push('Local contrast');
+    if (cfg.vibrance > 0) s.push('Vibrance');
     if (cfg.sharpAmount > 0) s.push('Adaptive sharpening');
     if (cfg.textProtection) s.push('Text/logo protection');
     if (cfg.portraitProtection) s.push('Portrait protection');

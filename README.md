@@ -60,15 +60,35 @@ Original
 Tiled cleanup at ORIGINAL resolution — denoise, deblock
   ↓
 Multi-pass / Lanczos3 resample to target resolution
-  ↓  (only if Detail / Local Contrast / Sharpening is on)
-Tiled finishing pass at TARGET resolution — detail, local contrast, adaptive sharpen
+  ↓
+Color & tone: auto white balance → auto levels → CLAHE → shadow/highlight recovery
+  ↓
+Detail enhancement → local contrast → vibrance
+  ↓
+Adaptive sharpening (always last)
   ↓
 Final output
 ```
 
-Cleaning noise **before** the resample (not after) is deliberate: denoising a small source image is both cheaper and more correct than denoising after upscaling has already spread and amplified that noise across more pixels. When neither Noise Reduction nor JPEG Artifact Removal is enabled, that phase is skipped entirely rather than run as a no-op.
+Cleaning noise **before** the resample (not after) is deliberate: denoising a small source image is both cheaper and more correct than denoising after upscaling has already spread and amplified that noise across more pixels. Color/tone correction runs before detail/sharpening for the same reason a photo editor's workflow does: there's no point sharpening or boosting the "clarity" of a color cast or a flat, muddy tonal range — fix the color and contrast foundation first, then refine detail on top of it. When a stage's toggle/slider is off, it's skipped entirely rather than run as a no-op.
 
-## 3. Quality metrics — measurable, not invented
+## 3. Color & tone — beyond sharpness
+
+Sharpening isn't the whole story, and the brief specifically asked for more. These are the newer stages, and — same rule as everything else in this app — every one is a real, published, decades-old technique with a name you can look up, not something invented for this project:
+
+| Stage | What it is |
+|---|---|
+| **Auto white balance** | Gray-World color correction: assumes a scene with reasonably varied colors averages out to neutral gray, measures how far each channel's mean actually is from that, and scales channels back toward it (gain clamped to a moderate range so a genuinely warm sunset doesn't get corrected into gray mush). |
+| **Auto levels** | Per-channel percentile-clipped histogram stretch — finds the black/white point at roughly the 0.4th/99.6th percentile of each channel (so a handful of outlier pixels can't anchor the whole stretch) and remaps that range to the full 0–255 span. The standard "fix flat, washed-out contrast" move in every photo editor. |
+| **Adaptive contrast (CLAHE)** | *Contrast-Limited Adaptive Histogram Equalization* (Zuiderveld, Graphics Gems IV, 1994) — the same algorithm used in medical/scientific imaging to bring out detail in both dark and bright regions of a frame at once. Splits the image into an 8×8 tile grid, equalizes each tile's local histogram with a clip limit (preventing the noise amplification that plain histogram equalization is notorious for), and bilinearly blends between neighboring tiles' mappings so no tile boundaries show. Applied as a luminance ratio, not a flat replacement, so color is preserved. |
+| **Shadow / highlight recovery** | A luminance-masked tone lift/pull: shadows are lifted in proportion to how dark they already are (quadratic falloff, so midtones are barely touched), highlights pulled down the same way from the bright end. |
+| **Vibrance** | Boosts muted colors more than already-saturated ones — unlike a flat saturation multiply, which oversaturates skies and clips vivid colors equally — and specifically damps the boost across skin-tone hues so portraits don't turn plastic-orange the way aggressive flat saturation does. |
+
+All five are genuinely new pipeline stages (implemented in `js/shared-filters.js`, called from both the image and video workers where it's safe to — see the video flicker note below), not new sliders bolted onto the existing sharpening math.
+
+**Why CLAHE, auto white balance, and auto levels are image-only.** All three compute their correction from that specific frame's own pixel statistics — channel means, histograms, tile histograms. In a still image that's exactly right. In video, scene content shifts slightly frame to frame even in a static shot (sensor noise, micro camera-shake, compression), which shifts those statistics too, and the result is visible brightness/color/contrast "breathing" between frames — precisely the flicker the brief said to avoid. Vibrance and shadow/highlight recovery made the cut for video because both are fixed, deterministic per-pixel functions with zero dependency on frame-wide statistics: the same input pixel always produces the same output pixel, so there's nothing for them to drift.
+
+## 4. Quality metrics — measurable, not invented
 
 The Source Quality Analysis and Processing Information panels only show numbers that are actually computed, never a made-up "quality score":
 
@@ -78,7 +98,7 @@ The Source Quality Analysis and Processing Information panels only show numbers 
 
 All three are computed on a downsampled (max 512px) grayscale sample so analysis stays fast regardless of source/output size, and run in the Web Worker so they never block the UI.
 
-## 4. Memory safety on 8K exports
+## 5. Memory safety on 8K exports
 
 An 8K RGBA canvas is `7680 × 4320 × 4 bytes ≈ 132 MB` on its own, and a naive multi-stage pipeline can multiply that several times over — that's how mobile tabs crash. This app avoids that by:
 
@@ -89,18 +109,18 @@ An 8K RGBA canvas is `7680 × 4320 × 4 bytes ≈ 132 MB` on its own, and a naiv
 
 If a phone genuinely can't handle an 8K export, the honest outcome is that it's slow or the browser tab restarts it — there's no way to fully prevent that from a static web page with no server-side processing, but tiling keeps the odds firmly in your favor compared to a naive single-buffer approach.
 
-## 5. Mobile performance tips
+## 6. Mobile performance tips
 
 - **Balanced** resampling quality is the sensible default; **Maximum** (Lanczos3) looks best but costs more, **Fast** is for quick previews.
 - Noise Reduction and JPEG Artifact Removal are each a full tiled edge-aware smoothing pass — stacking both at High roughly doubles that portion of processing time. Most clean photos don't need either.
 - Local Contrast uses a large blur radius and is the single most expensive enhancement toggle; leave it off unless you specifically want the effect.
 - 8K is supported but is inherently the slowest, most memory-hungry option on any device, phone or otherwise — that's the nature of 33 million pixels, not a limitation specific to this app.
 
-## 6. Processing Mode presets
+## 7. Processing Mode presets
 
 Photo / Social Media / News GFX / Portrait / Max Quality are just starting bundles of the same parameters you can see and adjust yourself (defined plainly in `js/presets.js` — nothing hidden). Changing any individual control after picking a preset automatically switches the mode to **Custom** so your adjustment isn't silently overwritten.
 
-## 7. Video (new)
+## 8. Video (new)
 
 The Video tab adds real, non-AI, in-browser video upscaling/enhancement — same "no AI, no upload" philosophy as the image side, extended to a second medium with its own real technical constraints, stated plainly rather than glossed over:
 
@@ -113,7 +133,7 @@ The Video tab adds real, non-AI, in-browser video upscaling/enhancement — same
 - **Text/logo and portrait protection are image-only**, on purpose: those heuristics are inherently a little noisy frame-to-frame, and applying them per-frame without temporal smoothing is exactly the kind of thing that would flicker — the one thing explicitly asked to avoid. Rather than ship a flickery version of a feature, video enhancement sticks to the temporally-stable stages (denoise, detail, sharpen), which are already deterministic per-frame and don't have this problem in practice.
 - **Video resampling is single-pass** (Lanczos3 via the WebGL2 shader, or bicubic via canvas), not the multi-pass stepped treatment used for large image upscales — a real-time per-frame budget doesn't leave room for multiple resize passes per frame.
 
-## 8. Full file list for GitHub Pages
+## 9. Full file list for GitHub Pages
 
 ```
 upres/
@@ -134,6 +154,6 @@ upres/
 
 Upload all of these preserving the folder structure exactly — `js/` and `workers/` must stay as separate top-level folders since `video-worker.js` references `../js/shared-filters.js` by relative path.
 
-## 9. Privacy
+## 10. Privacy
 
 No image or video ever leaves the browser. No analytics, no tracking, no login, no database, no external API calls of any kind.
